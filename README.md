@@ -18,14 +18,14 @@ Codexとの会話でホームページの修正依頼を整理し、運用担当
 
 ```text
 次のHP更新受付スキルを、同梱のreferencesも含めて導入してください。
-https://github.com/SpecialistDoctors-Inc/simy-hp-skills/tree/main/skills/hp-customer-intake
+https://github.com/SpecialistDoctors-Inc/simy-hp-skills/tree/0d41c574fe9c45f8ef1f2e638cf4fd39b9fa3fe5/skills/hp-customer-intake
 公式のskill-installerが利用できれば、それを使ってください。
 既に同名スキルがある場合は上書きせず、取得元と内容を確認してください。
 導入後は、新しいチャットでスキルが認識されることを確認してください。
 今回は導入だけで、依頼登録・サイト変更・メール送信は行いません。
 ```
 
-初回導入に使う固定リビジョンは、公開時の検証結果に合わせて更新します。
+上のURLは、受付スキルの内容を固定したリビジョン `0d41c574fe9c45f8ef1f2e638cf4fd39b9fa3fe5` を指定しています。スキルの更新は運用担当が確認してから案内します。
 
 ## このスキルが行うこと
 
