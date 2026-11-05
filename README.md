@@ -1,43 +1,140 @@
-# HP更新の受付スキル
+# HP ローカル編集プラグイン（開発中）
 
-Codexとの会話でホームページの修正依頼を整理し、運用担当が指定したGoogleスプレッドシートに登録するためのスキルです。SIMYへの登録は不要です。
+Codexと一緒にホームページを通常のローカルファイルとして編集するためのパッケージです。
+利用者のGit導入・GitHubアカウント・SIMYアカウントは不要です。
+macOS / Linux の Python 3 標準ライブラリで動作します。v1 は Windows に対応していません。
 
-この公開リポジトリには、利用者側の受付スキルと必要な同梱資料だけを置きます。サイト本体・開発側の認証情報・医院ごとの受付表や個人設定は含みません。GitHubアカウントは導入に不要です。
+**接続先サービスはまだ配備されていません。** このパッケージを入れるだけでは
+Googleログイン、サイトへのアクセス、保存、プレビュー、本番公開は利用可能になりません。
+実際のCodexホストでの接続・確認カードの検証も必要です。
 
-## 最初にすること
-
-1. Codexにログインします。
-2. 下の導入メッセージをCodexに貼り付けます。
-3. Google Driveプラグインを追加し、利用するGoogleアカウントで接続します。
-4. 運用担当から受け取った受付表・対象サイトの設定を渡し、接続を確認します。
-5. 運用担当と合意した受付表・お知らせを使って、練習の依頼を1件登録します。運用側が作る確認用ページと、運用側から届く通知メールを一緒に確認します。
-
-スキルを入れるだけではGoogle接続や受付先の設定は完了しません。ログインとアクセス許可は、ご本人が画面上で行います。
-
-## Codexへ渡す導入メッセージ
+## パッケージ
 
 ```text
-次のHP更新受付スキルを、同梱のreferencesも含めて導入してください。
-https://github.com/SpecialistDoctors-Inc/simy-hp-skills/tree/0d41c574fe9c45f8ef1f2e638cf4fd39b9fa3fe5/skills/hp-customer-intake
-公式のskill-installerが利用できれば、それを使ってください。
-既に同名スキルがある場合は上書きせず、取得元と内容を確認してください。
-導入後は、新しいチャットでスキルが認識されることを確認してください。
-今回は導入だけで、依頼登録・サイト変更・メール送信は行いません。
+.agents/plugins/marketplace.json
+plugins/hp-local-editor/
+  plugin.json
+  mcp.json
+  skills/hp-local-editor/
+    SKILL.md
+    references/protocol.md
+    scripts/hp_local_editor.py
 ```
 
-上のURLは、受付スキルの内容を固定したリビジョン `0d41c574fe9c45f8ef1f2e638cf4fd39b9fa3fe5` を指定しています。スキルの更新は運用担当が確認してから案内します。
+[ローカル編集スキル](plugins/hp-local-editor/skills/hp-local-editor/SKILL.md)と
+[接続設定](plugins/hp-local-editor/mcp.json)を、独立したプラグインにまとめています。
+インストール対象は `plugins/hp-local-editor` です。旧受付スキルはその外にあるため、
+このプラグインには含まれません。公開パッケージにサイト本体、医院固有の設定、
+Sheet・DriveのID、メールアドレス、認証情報は含めません。
 
-## このスキルが行うこと
+## Gitを使わない導入手順（配備後に検証予定）
 
-- 変更箇所・文章などを確認し、不足する情報を質問します。
-- 確認済みの受付表に依頼と受付完了記録を保存し、読み戻して確認します。
-- 確認用ページの結果を読み、追加修正や公開の判断を手伝います。
+運用担当は、プラグインを含む検証済みの**40桁コミットSHA**と、そのZIPのSHA256を案内します。
+現在の変更は未公開のため、まだ利用可能な配布リビジョンはありません。
+`main` や可変ブランチを固定版の代わりに使わないでください。
 
-開発・配備・メール送信は運用側の仕組みが担当します。受付表への記入だけで本番公開にはなりません。初回試用で変更する範囲は、運用担当が指定した既存のお知らせの本文に限定します。
+1. Codexにログインし、運用担当の指定した固定ZIPをCodexにダウンロード・検証・展開してもらいます。
+   GitのcloneやGit版マーケットプレイスの取得は使いません。
+2. 展開したローカルフォルダーのマーケットプレイスを、利用者が確認したうえでローカルソースとして追加します。
+   `.agents/plugins/marketplace.json` は `./plugins/hp-local-editor` だけを参照します。
+3. 対応するCodexアプリのプラグイン画面で `HP ローカル編集` をインストールし、セットアップを実行します。
+   ローカルソースの対応状況はホストによるため、実際の表示を確認します。
+4. サービス配備後、利用者本人がホストの画面でGoogleログインと許可を行います。
+   `hp_profile` と `hp_list_sites` で接続先・対象サイト・権限を確認します。
+5. **Google Driveプラグインは別に接続します。** 編集元ZIPの取得と変更ZIPのアップロードに使い、
+   Driveの実際の接続プロフィールを `hp_profile` の本人情報と照合します。変更ZIPの宛先は、
+   認証済みの作業領域作成結果にある `upload_folder_id` だけを使います。貼り付けた別のIDや似た名前のフォルダーへは送信しません。
+   HPサービスへのログインだけではDrive接続は完了しません。
 
-## スキルの内容
+固定ZIPのURL形式は
+`https://codeload.github.com/SpecialistDoctors-Inc/simy-hp-skills/zip/<検証済み40桁コミットSHA>`
+です。山括弧部分は実際に配布されたSHAへ置き換える必要があります。
 
-- [hp-customer-intake](skills/hp-customer-intake/SKILL.md)
-- [同梱の受付表仕様](skills/hp-customer-intake/references/workbook-contract.md)
+Codexへの導入依頼例:
 
-公開するスキルは `skills/hp-customer-intake` の1つです。運用担当は検証したコミットを固定して配布します。開発側のAWS・GitHub認証情報を利用者に渡す必要はありません。
+```text
+運用担当が指定した検証済み40桁コミットSHAとZIPのSHA256を使い、
+simy-hp-skillsの固定ZIPをダウンロードして、ハッシュを検証してください。
+Gitは使わず、新しいローカルフォルダーに展開してください。
+plugins/hp-local-editor/plugin.json と mcp.json、同梱スキルを確認して、
+このプラグインだけをローカルソースから導入する準備をしてください。
+個人設定や既存プラグインを上書きせず、実際のインストールはホストの画面で確認します。
+今回は導入準備だけで、接続・依頼登録・サイト変更・保存・公開・メール送信は行いません。
+```
+
+ローカルソース登録に対応するCLIでは、利用者の確認後に
+`codex plugin marketplace add /absolute/path/to/extracted-package` を使えます。
+これは手順の説明であり、このリポジトリの検証では個人設定の変更や接続は行っていません。
+
+## ローカル編集と保存
+
+スナップショットを `workspace/site/` の普通のファイルとして開き、Codexが内容を編集します。
+`.hp/` に原本・未確認の保存パッケージ・受領結果を保持します。
+バックエンドAIによる変更生成や競合解決は使いません。
+
+同梱のPythonヘルパーは通信やGit実行をせず、次を扱います。
+
+- `init`: 認証済みの作業領域作成結果とZIPのハッシュ・サイト・作業領域・基準コミットを照合してから、新しい作業領域に展開。
+- `status --diff`: 追加・変更・削除と、文章の差分を確認。
+- `pack`: 明示的な削除と固定の操作IDを含む変更ZIPを作成。
+- `accept`: 保存済み受領結果に一致する原本だけを更新し、ZIP作成後のローカル編集を保持。
+
+認証済みの `hp_get_operation` で作業領域作成の完了を確認し、その `result`
+（`kind: "workspace"`）を `open-result.json` として保存します。
+その結果の `snapshot_file_id` からダウンロードしたZIPを、同梱スキルのディレクトリで
+次のように検証・展開します。
+
+```sh
+python3 scripts/hp_local_editor.py init snapshot.zip workspace --receipt open-result.json
+```
+
+受領結果の `snapshot_sha256` とZIP全体、`site_id`・`workspace_id`・`base_commit` と
+ZIPのマニフェストが一致しない場合、作業領域やロックファイルは作成しません。
+ZIP内部のハッシュが整合するだけでは、正しいサイトから取得した証拠にはなりません。
+失敗時も元のZIP・受領結果・既存の作業領域は保持します。
+これは認証済みの結果とファイルを結びつける検証で、実際のGoogleログインを検証した証拠ではありません。
+
+`pack` が返す `operation_id` を、そのまま `hp_save_draft.operation_id` に使います。
+保存完了後の `hp_get_operation` の `result` が `kind: "saved"` の受領結果です。
+`schema_version`、`site_id`、`workspace_id`、`operation_id`、`base_commit`、
+`saved_commit`、`bundle_sha256` を含むこの結果だけを `accept` に渡します。
+操作全体のラッパーや、まだ保存されていない受付結果は渡しません。
+
+保存と公開は別の操作です。`hp_submit_preview` で確認ページを準備し、
+`hp_prepare_publish` の確認カードから対象を確認します。`hp_confirm_publish` はアプリ専用です。
+受付中・再確認中・通知の問題を、公開完了と同じ意味で表示しません。
+
+## 接続形式と残る検証
+
+`plugin.json` と `mcp.json` は Agent Plugins 1.0.0 の形式です。
+接続先は `https://hp-control.simy.one/mcp` の Streamable HTTP です。
+OAuthはサーバーの保護リソース・認可サーバーのメタデータから検出します。
+サーバー側でDCR、同じリソースURL、`openid email hp:read hp:write` を扱い、
+パッケージにクライアントシークレットや固定トークンを置きません。
+
+公式OpenAIドキュメントにあるMCPごとの認証拡張は、現在のAgent Plugins 1.0.0の
+公開MCPスキーマには定義されていません。そのため、このパッケージは有効な標準コアだけを宣言し、
+認証はサーバー側の検出に任せます。プラグイン側の表示・セットアップ情報は、
+対応する `extensions.com.openai` に置きます。
+
+実際のホストでOAuth検出とDCR、Google本人確認、対象サイトの権限、Driveとのファイル受け渡し、
+非公開メタデータとアプリ専用確認ボタンを確認する必要があります。
+ホストによっては登録済みMCPの対応付けが後で必要になる場合があります。
+このパッケージには未取得の登録IDを記載していません。配備・導入・本番公開の完了は主張しません。
+
+形式の参照: [公式OpenAIプラグイン仕様](https://developers.openai.com/plugins/build/plugins)。
+
+## 互換用の旧受付スキル
+
+[hp-customer-intake](skills/hp-customer-intake/SKILL.md) と
+[旧受付表仕様](skills/hp-customer-intake/references/workbook-contract.md)は変更せず残します。
+こちらは会話を受付表へ記録する別の仕組みで、ローカル編集プラグインの導入対象には含めません。
+旧スキルの既存固定リビジョンは
+`0d41c574fe9c45f8ef1f2e638cf4fd39b9fa3fe5` です。
+
+## 検証
+
+`python3 -m unittest discover -s tests -v`
+
+Pythonヘルパーは標準ライブラリのみを使用します。プラグインやスキルの配布自体は、
+サービスの配備・実際のGoogleログイン・メールの受信・本番公開の検証とは別です。

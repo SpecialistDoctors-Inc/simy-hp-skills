@@ -1,0 +1,154 @@
+---
+name: hp-local-editor
+description: Edit a managed static website as ordinary local files and prepare or acknowledge bounded snapshot/change packages. Use with the HP local editor service; no customer Git account or Git installation is required.
+---
+
+# Local homepage editing
+
+Use the bundled Python 3 standard-library helper on macOS or Linux. Windows is
+not supported in v1. It never invokes Git, installs
+dependencies, runs supplied scripts, or makes network requests. This skill works
+with operator-provided snapshots and saved receipts; it does not provision an
+account or deploy a site. Read [the wire contract](references/protocol.md) when
+integrating a service or diagnosing rejected packages.
+
+## Plugin setup
+
+For a setup request, confirm macOS/Linux and Python 3, then discover the plugin's
+HP control tools. The configured endpoint is `https://hp-control.simy.one/mcp`.
+The service is not deployed yet: installing this package is not evidence of a
+working connection. Do not silently edit personal/global Codex settings, invent
+an app registration, or claim OAuth setup succeeded. After deployment is
+confirmed, the host must discover protected-resource/OAuth metadata, complete
+Google login in the user's own UI, and verify `hp_profile` plus `hp_list_sites`.
+The server selects the validated Google subject and site roles; never supply a
+subject or repository as a tool argument.
+
+Connect the Google Drive plugin separately for snapshot download and changes-ZIP
+upload. Read its actual connected profile and compare its verified account email
+to `hp_profile.email`; compare the Google subject too when the connector exposes
+the same identifier (a Drive permission ID is not an OIDC subject). An email alias
+is not a separate Google account. If the account binding cannot be established,
+stop before transferring files. Use exactly `upload_folder_id` from the
+authenticated completed open-workspace `result`; do not substitute a pasted or
+guessed folder, search for a similar name, or widen Drive permissions. Missing access or setup is a concrete
+setup gap, not a reason to fall back to the old spreadsheet intake skill.
+
+Actual Codex host verification is still required for OAuth discovery/DCR,
+private result metadata and app-only confirmation tools. A registered MCP mapping
+may be needed by a host later; the portable package does not invent one. Saving
+a draft is separate from publication, which remains gated until host validation.
+A setup-only request does not open a workspace, save a draft, or publish.
+
+## Control tools and local receipts
+
+Discover the actual tool handles; these are their service-level names:
+
+| Purpose | Tool |
+| --- | --- |
+| Verify authenticated identity and sites | `hp_profile`, `hp_list_sites` |
+| Request an editable snapshot | `hp_open_workspace` |
+| Read the durable operation result | `hp_get_operation` |
+| Save an uploaded changes ZIP | `hp_save_draft` |
+| Prepare a verified preview | `hp_submit_preview` |
+| Request cancellation | `hp_cancel_operation` |
+| Open a publication confirmation card | `hp_prepare_publish` |
+| Submit the private card's confirmation | `hp_confirm_publish` (app only) |
+
+Keep operation IDs stable on retries. For `hp_save_draft`, use exactly the ID
+returned by local `pack`, not a newly generated ID. The input bundle hash is the
+helper's `bundle_sha256` and the file ID is the uploaded ZIP in that exact
+open-result `upload_folder_id`. A queued/running operation has not saved or published yet.
+
+For an open-workspace operation, read its `result` only after authenticated
+completion and save that exact `kind: "workspace"` object as `open-result.json`.
+Download exactly its `snapshot_file_id`, then validate the snapshot against that
+receipt using `init` below. The helper checks the ZIP
+`snapshot_sha256` plus manifest `site_id`, `workspace_id`, and `base_commit` before
+creating any workspace or lock metadata. A self-consistent ZIP is insufficient
+without the authenticated server result. Preserve that result if download or
+validation fails; do not invent a receipt or use a different workspace's result. For a saved draft, extract the public
+operation's `result` object (not the whole tool or operation envelope) as the
+saved receipt: `schema_version`, `kind: "saved"`, `site_id`, `workspace_id`,
+`operation_id`, `base_commit`, `saved_commit`, `bundle_sha256`. Pass that exact
+receipt to `accept`; all identity/base/hash fields must match the pending package.
+Reporting/notification problems do not authorize resending a save or publication.
+
+Commands below are relative to this installed skill directory; use its actual
+absolute helper path when the user's site workspace is elsewhere.
+
+Initialize a new dedicated workspace from a service-provided snapshot:
+
+```sh
+python3 scripts/hp_local_editor.py init snapshot.zip workspace --receipt open-result.json
+```
+
+Edit ordinary static files under `workspace/site/`. Keep `.hp/` private and
+unchanged: it holds the authenticated open-result copy, validated baseline,
+pending candidate, and saved receipts.
+Use the customer's requested scope, inspect the site in a browser, and explain
+visible changes. Never execute downloaded JavaScript, hooks, or build scripts as
+part of package initialization. Browser preview of a site is a separate explicit
+verification activity with the usual browser isolation.
+
+Inspect changes, including a text diff or binary-file notice:
+
+Write a concise change summary from the actual diff and the user's request;
+pass it to `pack --summary`. Do not copy the whole conversation, email addresses
+or credentials into it. The server adds trusted operation metadata and supplies
+a deterministic fallback title if the summary is absent. A title never authorizes
+publication. During an authorized editing task, save a draft after each coherent
+group of edits and before ending the work; setup-only or discussion-only requests
+do not authorize draft writes. Report saved status only after the exact receipt
+has been read back and accepted locally.
+
+```sh
+python3 scripts/hp_local_editor.py status workspace --diff
+python3 scripts/hp_local_editor.py pack workspace changes.zip --summary 'Update opening hours'
+```
+
+The output ZIP must be outside the workspace. Existing output files are accepted
+only when their bytes exactly match the pending bundle; choose a new filename for
+a different package. No-op packing produces no ZIP.
+Deletions are explicit. A pending operation is immutable: retries reuse its exact
+bytes and operation ID even when local files have changed since packing. Retry
+without a new summary. Do not remove pending metadata to bypass an ambiguous
+save; first reconcile the operation with the service.
+
+Send the package only through the configured local editor service after target
+and authorization are established. Set `hp_save_draft.operation_id` to the exact
+`operation_id` returned by `pack`; generating a fresh UUID would contradict the
+bundle and be rejected. A save receipt acknowledges that exact
+package, not later edits. After receiving the matching saved receipt:
+
+```sh
+python3 scripts/hp_local_editor.py accept workspace saved-receipt.json
+python3 scripts/hp_local_editor.py status workspace --diff
+```
+
+Acceptance advances the baseline to the saved pending candidate and preserves
+all later edits under `site/`. Duplicate acceptance is safe. A receipt mismatch,
+unsafe path, baseline mismatch, or server conflict stops that save: explain the
+specific error and reconcile with the service; do not invent a successful save.
+The helper checks consistency, not server authenticity: receipts and snapshots
+must come from the trusted authenticated service.
+
+Saving a draft does not publish. The server owns Google authentication, repository
+binding, preview/reconciliation, approval, and publication controls. No backend
+AI is needed; content changes and conflict decisions remain in the customer's
+Codex conversation. The repository retains `hp-customer-intake` separately for
+compatibility. It is not bundled into this plugin and is not an implicit fallback.
+
+Each helper command takes a nonblocking exclusive workspace lock (including
+status). A busy workspace fails immediately; retry after the active invocation
+finishes. The persistent sibling `.WORKSPACE.hp.lock` file is coordination
+metadata, not a site file. Do not remove it while a helper might be running.
+
+When the authenticated service definitively rejects a save with no external
+save effect (for example, a stale workspace), keep the old workspace, pending
+bundle, and rejection evidence. Open a **new** workspace from the latest server
+snapshot in a different directory, then have Codex inspect the old/local and new
+files and manually reapply only the desired changes. Inspect and verify the new
+site before packing with its new baseline and operation ID. Never delete
+`.hp/pending` to bypass recovery. If the save outcome is uncertain, reconcile the
+old operation first; a new workspace is not proof that the prior save had no effect.
