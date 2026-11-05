@@ -1,18 +1,23 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "hp-local-editor",
-  "version": "0.1.1",
-  "description": "Edit a managed static website locally and exchange bounded workspace packages with the HP control service.",
+  "version": "0.2.0",
+  "description": "Edit managed static files locally, preview saved file changes immediately, and use verified preview and publication controls.",
   "extensions": {
     "com.openai": {
       "onboardingSkill": "./skills/hp-local-editor/SKILL.md",
       "interface": {
         "displayName": "HP ローカル編集",
         "shortDescription": "Codexとホームページをローカル編集",
-        "longDescription": "通常のサイトファイルをCodexで編集し、検証済みの変更パッケージを保存・確認するための開発中プラグインです。サービス接続と実際のホストでの動作確認は別途必要です。",
+        "longDescription": "Codexでホームページを編集し、手元で表示を確認します。右下メニューから確認ページの準備と公開前の確認を行えます。本人の接続とサイトの権限が必要で、本番公開は確認した内容だけを対象にします。",
         "category": "Productivity",
-        "capabilities": ["Read", "Write"],
-        "defaultPrompt": ["HPローカル編集の接続と利用条件を確認してください。"]
+        "capabilities": [
+          "Read",
+          "Write"
+        ],
+        "defaultPrompt": [
+          "HPローカル編集の接続と利用条件を確認してください。"
+        ]
       }
     }
   }

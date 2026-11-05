@@ -1,15 +1,16 @@
 ---
 name: hp-local-editor
-description: Edit a managed static website as ordinary local files and prepare or acknowledge bounded snapshot/change packages. Use with the HP local editor service; no customer Git account or Git installation is required.
+description: Edit a managed static website locally, preview file changes immediately, and save or confirm verified site updates through HP local editor. No customer Git installation or GitHub account is required.
 ---
 
 # Local homepage editing
 
-Use the bundled Python 3 standard-library helper on macOS or Linux. Windows is
-not supported in v1. It never invokes Git, installs
-dependencies, runs supplied scripts, or makes network requests. The helper
-packages local files and acknowledges saved receipts; remote operations use the
-configured HP tools below. Read [the wire contract](references/protocol.md) when
+Use the bundled Python 3 tools on macOS or Linux; Windows is not supported.
+The package helper `hp_local_editor.py` never invokes Git, installs dependencies,
+runs supplied scripts, or makes network requests. The separate `hp_preview.py`
+launcher serves a loopback preview and uses the installed Codex app-server for
+allowlisted HP tools without starting a model turn or reading credentials.
+Remote operations use the authenticated HP service below. Read [the wire contract](references/protocol.md) when
 integrating a service or diagnosing rejected packages.
 
 ## Plugin setup
@@ -41,6 +42,21 @@ the public package. Draft saving and publication are separate; service gates and
 the user's exact-artifact confirmation govern publication.
 A setup-only request does not open a workspace, save a draft, or publish.
 
+## Immediate local preview and two confirmation surfaces
+
+For local display or floating controls, read [local preview](references/local-preview.md).
+Launch the installed `scripts/hp_preview.py` with the existing validated workspace.
+Open the exact printed loopback URL; edits under `site/` reload automatically.
+The local shell keeps controls separate from the sandboxed site. Do not inject
+publication controls or credentials into site files. Local preview requires no
+cloud save or deployment.
+
+The conversation card and local confirmation dialog use the same server approval
+and operation records. Use the supported surface the user chooses; do not claim a
+Codex conversation card works based on a local-browser test. When publication is
+disabled, the confirmation is explicitly a connection test with no publication.
+A local confirmation click is a browser-host test, not Codex MCP Apps acceptance.
+
 ## Control tools and local receipts
 
 Discover the actual tool handles; these are their service-level names:
@@ -55,6 +71,8 @@ Discover the actual tool handles; these are their service-level names:
 | Request cancellation | `hp_cancel_operation` |
 | Resume an eligible paused execution after its cause is fixed | `hp_resume_operation` |
 | Open a publication confirmation card | `hp_prepare_publish` |
+| Recover the original confirmation result without a nonce | `hp_get_confirmation` |
+| Withdraw an unaccepted confirmation without cancelling a publication | `hp_cancel_confirmation` |
 | Submit the private card's confirmation | `hp_confirm_publish` (app only) |
 
 Keep operation IDs stable on retries. For `hp_save_draft`, use exactly the ID
@@ -170,3 +188,11 @@ cancelled work. Read the original operation until its factual outcome is known.
 Do not loop through new recovery IDs while the cause remains unresolved, edit
 the service ledger, or use execution resume to resend a completed publication's
 email. Reporting-only problems need reporting recovery, not another publication.
+
+If confirmation's response is lost, preserve `approval_id` and read
+`hp_get_confirmation` to recover the existing operation or connection-test result.
+`prepared` or an expired deadline alone cannot prove that an in-flight confirmation
+had no effect. An explicit `hp_cancel_confirmation` withdraws an unaccepted card
+atomically; it returns any already accepted publication unchanged. A matching
+`already_requested` result can contain a failed or cancelled operation: display its
+actual status. Never resend a confirmation nonce or turn a test card into approval.

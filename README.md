@@ -1,8 +1,8 @@
-# HP ローカル編集プラグイン（開発中）
+# HP ローカル編集プラグイン（試用版）
 
 Codexと一緒にホームページを通常のローカルファイルとして編集するためのパッケージです。
 利用者のGit導入・GitHubアカウント・SIMYアカウントは不要です。
-macOS / Linux の Python 3 標準ライブラリで動作します。v1 は Windows に対応していません。
+macOS / Linux、Python 3、Codex CLIを使います。Windowsには対応していません。
 
 接続先は試用環境として配備されています。GitなしのCodex CLI導入、Google本人確認、
 実Driveとの受け渡し、下書き保存、確認用ページへの反映を検証しています。このパッケージの導入だけで
@@ -19,7 +19,12 @@ plugins/hp-local-editor/
   skills/hp-local-editor/
     SKILL.md
     references/protocol.md
+    references/local-preview.md
     scripts/hp_local_editor.py
+    scripts/hp_preview.py
+    scripts/hp_preview_state.py
+    scripts/hp_codex_client.py
+  assets/preview/
 ```
 
 [ローカル編集スキル](plugins/hp-local-editor/skills/hp-local-editor/SKILL.md)と
@@ -64,7 +69,17 @@ plugins/hp-local-editor/plugin.json と mcp.json、同梱スキルを確認し�
 
 ローカルソース登録に対応するCLIでは、利用者の確認後に
 `codex plugin marketplace add /absolute/path/to/extracted-package` を使えます。
-これは手順の説明であり、このリポジトリの検証では個人設定の変更や接続は行っていません。
+展開先のリポジトリルートには `.agents/plugins/marketplace.json` が必要です。
+Codex CLI 0.166.0では、次の操作で登録・導入状態を確認できます。既存の個人設定はバックアップし、関係のない設定を変更しません。
+
+```sh
+codex plugin marketplace add /absolute/path/to/extracted-package --json
+codex plugin add hp-local-editor@simy-hp-local --json
+codex plugin list --marketplace simy-hp-local --json
+codex mcp list --json
+```
+
+導入後に表示される本人のGoogleログインを完了し、対象サイトを確認してください。パスワードや認証コードはチャットに貼りません。
 
 ## ローカル編集と保存
 
@@ -108,6 +123,26 @@ ZIP内部のハッシュが整合するだけでは、正しいサイトから�
 元の操作を再開できます。再開依頼にも固定のIDを付けるため、応答が失われても
 同じ依頼を照合できます。取消済みの作業や、完了した公開のメールを送り直す操作ではありません。
 
+## 保存するたびに手元で確認する
+
+バージョン0.2.0には、ローカル確認画面を含みます。Codexに次のように依頼できます。
+
+> この作業フォルダーのHPをローカルで開き、ファイルを保存すると自動更新する確認画面を用意してください。文章を直しながら確認したいです。まだ本番公開はしません。
+
+Codexはインストールしたスキルの場所から、次のように起動します。
+
+```sh
+python3 scripts/hp_preview.py /absolute/path/to/workspace --codex /absolute/path/to/codex
+```
+
+表示されたローカルURLを開くと、右下に操作メニューが出ます。ファイルを保存すると画面へ自動反映します。手元に未保存の変更や保存待ちがあれば、先にCodexで下書き保存を完了します。メニュー自体には下書き保存機能を重複して設けていません。
+
+「確認ページを作る」では保存済みの内容を検証します。「公開内容を確認」では、検証済みのページを別タブで開き、公開前の内容を確認できます。公開が無効の環境では接続テストだけを行い、本番には反映しません。会話内の確認カードも同じサービスにつながりますが、実際のCodexホストでカードが利用できることは別に確認が必要です。
+
+通信が切れたり画面を閉じたりしても、`.hp/control/` の記録から同じ依頼を確認します。公開結果が不明な間は公開を繰り返しません。手元のファイルと `.hp/` をセットで残してください。詳しくは[ローカル確認と再開手順](plugins/hp-local-editor/skills/hp-local-editor/references/local-preview.md)を参照してください。
+
+現在のローカル確認はサイト内の相対リンクを対象にしています。`/assets/...` のような絶対パスや外部サービスを使うサイトは別の対応が必要です。保護を外して表示させることはしません。
+
 ## 接続形式と残る検証
 
 `plugin.json` と `mcp.json` は Agent Plugins 1.0.0 の形式です。
@@ -124,7 +159,7 @@ OAuthはサーバーの保護リソース・認可サーバーのメタデータ
 実際のホストでOAuth検出とDCR、Google本人確認、対象サイトの権限、Driveとのファイル受け渡し、
 非公開メタデータとアプリ専用確認ボタンを確認する必要があります。
 ホストによっては登録済みMCPの対応付けが後で必要になる場合があります。
-このパッケージには未取得の登録IDを記載していません。配備・導入・本番公開の完了は主張しません。
+このパッケージには未取得の登録IDを記載していません。ローカル画面の表示検証は、Codexの会話内カードの表示・クリックや本番公開の受入れの代わりにはなりません。
 
 形式の参照: [公式OpenAIプラグイン仕様](https://developers.openai.com/plugins/build/plugins)。
 
