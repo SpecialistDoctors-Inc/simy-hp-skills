@@ -7,19 +7,19 @@ description: Edit a managed static website as ordinary local files and prepare o
 
 Use the bundled Python 3 standard-library helper on macOS or Linux. Windows is
 not supported in v1. It never invokes Git, installs
-dependencies, runs supplied scripts, or makes network requests. This skill works
-with operator-provided snapshots and saved receipts; it does not provision an
-account or deploy a site. Read [the wire contract](references/protocol.md) when
+dependencies, runs supplied scripts, or makes network requests. The helper
+packages local files and acknowledges saved receipts; remote operations use the
+configured HP tools below. Read [the wire contract](references/protocol.md) when
 integrating a service or diagnosing rejected packages.
 
 ## Plugin setup
 
 For a setup request, confirm macOS/Linux and Python 3, then discover the plugin's
 HP control tools. The configured endpoint is `https://hp-control.simy.one/mcp`.
-The service is not deployed yet: installing this package is not evidence of a
-working connection. Do not silently edit personal/global Codex settings, invent
-an app registration, or claim OAuth setup succeeded. After deployment is
-confirmed, the host must discover protected-resource/OAuth metadata, complete
+Installing this package is not evidence of a working connection. Add only the
+requested plugin settings, preserving existing configuration; do not invent an
+app registration or claim OAuth setup succeeded. The host must discover
+protected-resource/OAuth metadata, complete
 Google login in the user's own UI, and verify `hp_profile` plus `hp_list_sites`.
 The server selects the validated Google subject and site roles; never supply a
 subject or repository as a tool argument.
@@ -34,10 +34,11 @@ authenticated completed open-workspace `result`; do not substitute a pasted or
 guessed folder, search for a similar name, or widen Drive permissions. Missing access or setup is a concrete
 setup gap, not a reason to fall back to the old spreadsheet intake skill.
 
-Actual Codex host verification is still required for OAuth discovery/DCR,
-private result metadata and app-only confirmation tools. A registered MCP mapping
-may be needed by a host later; the portable package does not invent one. Saving
-a draft is separate from publication, which remains gated until host validation.
+Before claiming support on a Codex host, verify OAuth discovery/DCR, private
+result metadata and app-only confirmation there. If a host needs a registered
+MCP mapping, use its actual approved ID and keep personal registrations out of
+the public package. Draft saving and publication are separate; service gates and
+the user's exact-artifact confirmation govern publication.
 A setup-only request does not open a workspace, save a draft, or publish.
 
 ## Control tools and local receipts
@@ -52,6 +53,7 @@ Discover the actual tool handles; these are their service-level names:
 | Save an uploaded changes ZIP | `hp_save_draft` |
 | Prepare a verified preview | `hp_submit_preview` |
 | Request cancellation | `hp_cancel_operation` |
+| Resume an eligible paused execution after its cause is fixed | `hp_resume_operation` |
 | Open a publication confirmation card | `hp_prepare_publish` |
 | Submit the private card's confirmation | `hp_confirm_publish` (app only) |
 
@@ -59,6 +61,11 @@ Keep operation IDs stable on retries. For `hp_save_draft`, use exactly the ID
 returned by local `pack`, not a newly generated ID. The input bundle hash is the
 helper's `bundle_sha256` and the file ID is the uploaded ZIP in that exact
 open-result `upload_folder_id`. A queued/running operation has not saved or published yet.
+
+Keep public control requests and results in a local `control-receipts/` directory
+beside the site workspace so a new Codex session can recover the same operation
+IDs. Keep these records outside `site/`; do not copy OAuth tokens, signed download
+URLs, or private confirmation metadata into them.
 
 For an open-workspace operation, read its `result` only after authenticated
 completion and save that exact `kind: "workspace"` object as `open-result.json`.
@@ -152,3 +159,14 @@ files and manually reapply only the desired changes. Inspect and verify the new
 site before packing with its new baseline and operation ID. Never delete
 `.hp/pending` to bypass recovery. If the save outcome is uncertain, reconcile the
 old operation first; a new workspace is not proof that the prior save had no effect.
+
+For an execution in `needs_attention`, first establish that the reported cause
+has been fixed and the user still wants that same operation completed. If the
+service exposes `hp_resume_operation`, pass the original `operation_id` and one
+new `recovery_id` UUID; save that request before sending it and reuse the recovery
+ID if its response is lost. This retains the original input, effects and any
+prior exact-artifact approval. It does not authorize a new publication or change
+cancelled work. Read the original operation until its factual outcome is known.
+Do not loop through new recovery IDs while the cause remains unresolved, edit
+the service ledger, or use execution resume to resend a completed publication's
+email. Reporting-only problems need reporting recovery, not another publication.

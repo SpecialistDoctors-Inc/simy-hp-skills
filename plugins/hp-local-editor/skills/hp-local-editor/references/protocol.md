@@ -70,3 +70,18 @@ if U==R retain it; otherwise return a conflict, including delete/modify. Unrelat
 file edits combine. Conflicts return to customer Codex; no server AI resolves them.
 A new preview revokes earlier publication preparation for the request. Public
 artifacts and approval bind the final resulting tree, not the user's initial ZIP.
+
+## Resuming paused execution
+
+`hp_resume_operation` takes `operation_id` and a separate UUID `recovery_id`.
+Only the original owner with the unchanged membership and site configuration
+versions may resume an execution in `needs_attention`. Cancellation, an active
+lease, another operation's site block, and completed/reporting-only work are not
+eligible. A publication additionally retains its original accepted approval.
+
+One atomic transaction appends a resumption audit and queues the same operation;
+it preserves sealed input, existing effects, pending-effect fences, approvals and
+external deadlines. Reusing the same recovery ID returns the current outcome
+without resetting or queueing again. Persist the request before sending it.
+Re-read the original operation until it settles; a queued retry is not completion.
+Use a new recovery ID only for a later deliberate retry after its cause is fixed.
