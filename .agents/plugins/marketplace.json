@@ -1,0 +1,12 @@
+{
+  "name": "simy-hp-local",
+  "interface": {"displayName": "HP ローカル編集（開発中）"},
+  "plugins": [
+    {
+      "name": "hp-local-editor",
+      "source": {"source": "local", "path": "./plugins/hp-local-editor"},
+      "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+      "category": "Productivity"
+    }
+  ]
+}
