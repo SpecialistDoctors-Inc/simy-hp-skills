@@ -6,6 +6,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 from urllib.parse import urlsplit
 import uuid
 
@@ -83,6 +84,94 @@ class PreviewTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         self.root = workspace(Path(self.temp.name)); self.hp = FakeHP(); self.session = Session(self.root, self.hp)
+    def test_public_readback_errors_are_bounded_known_codes_only(self):
+        self.session.record(readback_errors=['confirmation_readback_unavailable', 'SECRET-UNTRUSTED'])
+        self.assertEqual(self.session.public()['readback_errors'], ['confirmation_readback_unavailable'])
+
+    def test_environment_timestamps_are_copied_only_from_site_metadata(self):
+        original = self.hp.call
+        def call(name, arguments):
+            if name == 'hp_list_sites':
+                return {'structuredContent': {'sites': [{'site_id': 'sample-site', 'name': 'サンプル',
+                    'deployments': {'dev': {'updated_at': 1234, 'version': 12}, 'production': {'updated_at': 'invalid', 'version': True}}}]}}
+            return original(name, arguments)
+        self.hp.call = call
+        self.act('refresh')
+        self.assertEqual(self.session.public()['environments'], {
+            'dev': {'updated_at': 1234, 'version': 12}, 'production': {'updated_at': None, 'version': None}})
+
+    def test_failed_authentication_clears_previous_identity_dates_and_confirmation(self):
+        original = self.hp.call
+        for failure in ('account_changed', 'account_site_mismatch', 'access_revoked'):
+            with self.subTest(failure=failure):
+                self.hp.call = original
+                self.session.authenticate()
+                self.session.environments = {'dev': {'updated_at': 1234}}
+                self.session.confirmation = {'private': 'previous-confirmation'}
+                def call(name, arguments):
+                    if name == 'hp_profile':
+                        if failure == 'access_revoked':
+                            return {'isError': True, 'structuredContent': {'error': failure}}
+                        return {'structuredContent': {'subject': 'changed' if failure == 'account_changed' else 'sample-subject',
+                            'sites': [] if failure == 'account_site_mismatch' else ['sample-site']}}
+                    return original(name, arguments)
+                self.hp.call = call
+                with self.assertRaisesRegex(Blocked, failure):
+                    self.session.authenticate()
+                state = self.session.public()
+                self.assertIsNone(state['identity'])
+                self.assertEqual(state['environments'], {})
+                self.assertFalse(state['can_confirm'])
+                self.assertIsNone(self.session.confirmation)
+
+    def test_launcher_opens_ready_loopback_once_and_keeps_fallback_url(self):
+        import io
+        import hp_preview
+        from contextlib import redirect_stdout
+        for mode in ('default', 'disabled', 'failed', 'error'):
+            with self.subTest(mode=mode):
+                output = io.StringIO()
+                argv = ['hp-preview', str(self.root)] + (['--no-open'] if mode == 'disabled' else [])
+                def open_browser(url, new):
+                    self.assertEqual(new, 2)
+                    target = urlsplit(url)
+                    self.assertEqual(target.hostname, '127.0.0.1')
+                    connection = http.client.HTTPConnection(target.hostname, target.port)
+                    try:
+                        connection.request('GET', '/')
+                        response = connection.getresponse()
+                        self.assertEqual(response.status, 200)
+                        response.read()
+                    finally:
+                        connection.close()
+                    if mode == 'error':
+                        raise OSError('fixture browser unavailable')
+                    return mode != 'failed'
+                class Idle:
+                    def wait(self): raise KeyboardInterrupt()
+                # Patch only main's wait, leaving HTTP server threading intact.
+                with patch.object(sys, 'argv', argv), \
+                     patch('hp_preview.webbrowser.open', side_effect=open_browser) as opened, \
+                     patch('hp_preview.threading', wraps=__import__('threading')) as threads, \
+                     redirect_stdout(output):
+                    threads.Event.return_value = Idle()
+                    hp_preview.main()
+                self.assertEqual(opened.call_count, 0 if mode == 'disabled' else 1)
+                self.assertIn('Local HP preview: http://127.0.0.1:', output.getvalue())
+                self.assertEqual('ブラウザーで確認ページを開いてください' in output.getvalue(), mode in ('failed', 'error'))
+
+    def test_existing_confirmation_receives_bound_change_summary_on_readback(self):
+        self.card()
+        approval = self.session.public()['confirmation']['binding']['approval_id']
+        details = {'from_version': 2, 'to_version': 3, 'already_current': False,
+            'changes': {'items': [{'title': '診療時間', 'kind': 'changed', 'before': '18時', 'after': '19時'}], 'additional_count': 0}}
+        self.hp.approvals[approval]['publication_details'] = details
+        before = sum(name=='hp_prepare_publish' for name,args in self.hp.calls)
+        self.act('refresh')
+        self.assertEqual(self.session.public()['confirmation']['publication_details'], details)
+        self.assertEqual(sum(name=='hp_prepare_publish' for name,args in self.hp.calls), before)
+        self.assertFalse(any(name=='hp_confirm_publish' for name,args in self.hp.calls))
+
     def act(self, name): self.session.action(name, self.session.snapshot()['revision'])
     def card(self): self.act('prepare_preview'); self.act('open_confirmation')
     def save_new_local_baseline(self):

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Loopback-only site preview/control shell. No saves, models or credential parsing."""
+"""Loopback-only preview/chat shell with separate explicit delivery controls."""
 import argparse
+import webbrowser
 import fcntl
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -9,14 +10,18 @@ import os
 from pathlib import Path
 import secrets
 import stat
+import subprocess
+import sys
 import threading
 from urllib.parse import unquote, urlsplit
 
 from hp_codex_client import LazyCodexClient
 from hp_preview_state import Session, Blocked
+from hp_chat import Chat, ChatError
 import hp_local_editor as editor
 
-ASSETS = Path(__file__).resolve().parents[3] / 'assets/preview'
+ASSETS = ((Path(sys._MEIPASS) / 'assets/preview') if getattr(sys, 'frozen', False)
+          else Path(__file__).resolve().parents[3] / 'assets/preview')
 
 
 def site_bytes(root, relative):
@@ -45,8 +50,10 @@ def site_bytes(root, relative):
 
 
 class PreviewHost:
-    def __init__(self, session):
+    def __init__(self, session, chat=None):
         self.session = session
+        self.chat = chat
+        self.admission_lock = threading.Lock()
         self.csrf, self.site_token = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
         host = self
         class SiteHandler(BaseHTTPRequestHandler):
@@ -91,23 +98,43 @@ class PreviewHost:
                         return host.reply(self, 200, html, 'text/html; charset=utf-8')
                     if parsed.path == '/control.js':
                         return host.reply(self, 200, (ASSETS / 'control.js').read_text(), 'text/javascript; charset=utf-8')
-                    if parsed.path == '/api/state': return host.reply(self, 200, session.public())
+                    if parsed.path == '/api/state': return host.reply(self, 200, host.public())
                     if parsed.path == '/api/revision': return host.reply(self, 200, {'revision': session.revision()})
                     host.reply(self, 404, {'error': 'not_found'})
                 except (OSError, ValueError):
                     host.reply(self, 409, {'error': 'local_workspace_unavailable'})
             def do_POST(self):
                 if not self.valid(True): return host.reply(self, 403, {'error': 'invalid_origin_or_csrf'})
-                if self.path != '/api/action': return host.reply(self, 404, {'error': 'not_found'})
+                if self.path not in ('/api/action','/api/chat','/api/undo'): return host.reply(self, 404, {'error': 'not_found'})
                 try:
                     length = int(self.headers.get('Content-Length', '0'))
-                    if not 0 < length <= 1024: return host.reply(self, 413, {'error': 'request_too_large'})
+                    if not 0 < length <= (18000 if self.path=='/api/chat' else 1024): return host.reply(self, 413, {'error': 'request_too_large'})
                     body = editor.parse_json(self.rfile.read(length))
+                    if self.path == '/api/undo':
+                        if not host.chat or not isinstance(body, dict) or set(body) != {'request_id'}:
+                            return host.reply(self, 400, {'error': 'invalid_chat_request'})
+                        with host.admission_lock:
+                            host.chat.undo(body['request_id'])
+                        return host.reply(self, 200, host.public())
+                    if self.path=='/api/chat':
+                        if not host.chat or not isinstance(body,dict) or set(body)!={'request_id','text'}:
+                            return host.reply(self,400,{'error':'invalid_chat_request'})
+                        with host.admission_lock:
+                            host.chat.submit(body['request_id'],body['text'])
+                        return host.reply(self,202,host.public())
                     if not isinstance(body, dict) or set(body) != {'action', 'revision'} or not all(isinstance(value, str) for value in body.values()):
                         return host.reply(self, 400, {'error': 'invalid_request'})
-                    session.action(body['action'], body['revision'])
-                    host.reply(self, 200, session.public())
-                except Blocked as error:
+                    with host.admission_lock:
+                        if host.chat and body['action']!='refresh' and host.chat.busy():
+                            raise ChatError('chat_busy')
+                        if host.chat and body['action'] in ('prepare_preview', 'open_confirmation', 'confirm') and host.chat.has_pending_application():
+                            raise ChatError('local_apply_pending')
+                        if host.chat and body['action']=='prepare_preview':
+                            host.chat.prepare_preview(session,body['revision'])
+                        else:
+                            session.action(body['action'], body['revision'])
+                    host.reply(self, 200, host.public())
+                except (Blocked, ChatError) as error:
                     host.reply(self, 409, {'error': str(error)})
                 except Exception:
                     # Never log/return an RPC exception, private meta, URLs or body.
@@ -120,6 +147,9 @@ class PreviewHost:
         self.site_origin, self.origin = 'http://' + self.site_netloc, 'http://' + self.netloc
         self.site_url = self.site_origin + '/site/' + self.site_token + '/'
         self.threads = []
+
+    def public(self):
+        return {**self.session.public(), 'chat': self.chat.public() if self.chat else {'available':False,'busy':False,'requests':[]}}
 
     def reply(self, handler, status, value, mime='application/json; charset=utf-8'):
         data = (json.dumps(value, ensure_ascii=False) if mime.startswith('application/json') else value).encode()
@@ -145,7 +175,8 @@ class PreviewHost:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('workspace'); parser.add_argument('--codex', default='codex')
+    parser.add_argument('workspace'); parser.add_argument('--codex')
+    parser.add_argument('--no-open', action='store_true', help='Keep the browser closed for automated checks')
     args = parser.parse_args()
     session = Session(args.workspace, None)
     descriptor = os.open(session.directory / 'launcher.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -153,16 +184,32 @@ def main():
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         parser.exit(2, 'Local preview already owns this workspace lock; leave it intact.\n')
-    client = None; host = None
+    client = None; host = None; chat = None
     try:
         client = LazyCodexClient(session.directory, args.codex); session.client = client
-        host = PreviewHost(session)
-        print('Local HP preview: ' + host.start(), flush=True)
+        chat = Chat(session.root)
+        host = PreviewHost(session, chat)
+        origin = host.start()
+        identity = subprocess.check_output(['/bin/ps', '-p', str(os.getpid()),
+            '-o', 'pid=,ppid=,lstart=,command='], text=True).strip()
+        editor.write_json(session.directory / 'launcher.json', {
+            'pid': os.getpid(), 'ppid': os.getppid(), 'identity': identity,
+            'origin': origin, 'workspace': str(session.root),
+        })
+        print('Local HP preview: ' + origin, flush=True)
+        if not args.no_open:
+            try:
+                opened = webbrowser.open(origin, new=2)
+            except (webbrowser.Error, OSError):
+                opened = False
+            if not opened:
+                print('ブラウザーで確認ページを開いてください: ' + origin, flush=True)
         threading.Event().wait()
     except KeyboardInterrupt:
         pass
     finally:
         if host: host.close()
+        if chat: chat.close()
         if client: client.close()
         os.close(descriptor)
 

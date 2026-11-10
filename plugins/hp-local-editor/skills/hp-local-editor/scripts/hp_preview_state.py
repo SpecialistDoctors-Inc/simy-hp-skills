@@ -61,6 +61,25 @@ def binding(value):
     return {name: value[name] for name in ('approval_id', 'preview_id', 'site_id', 'source_commit', 'artifact_sha256', 'mode')}
 
 
+def publication_details(value):
+    if not isinstance(value, dict):
+        return None
+    result = {name: value.get(name) if type(value.get(name)) is int and value[name] > 0 else None
+              for name in ('from_version', 'to_version')}
+    result['already_current'] = value.get('already_current') is True
+    result['changes'] = None
+    changes = value.get('changes')
+    if isinstance(changes, dict) and isinstance(changes.get('items'), list):
+        items = changes['items']
+        count = changes.get('additional_count')
+        if (len(items) <= 5 and type(count) is int and count >= 0 and
+                all(isinstance(item, dict) and item.get('kind') in ('added', 'removed', 'changed', 'description') and all(isinstance(item.get(key), str) and len(item[key]) <= 120
+                    for key in ('title', 'before', 'after')) for item in items)):
+            result['changes'] = {'items': [{key: item[key] for key in ('title', 'kind', 'before', 'after')}
+                                         for item in items], 'additional_count': count}
+    return result
+
+
 class Session:
     def __init__(self, workspace, client, clock=time.time):
         self.root = Path(workspace).resolve()
@@ -82,6 +101,7 @@ class Session:
             need(self.journal.get('schema_version') == 1 and self.journal.get('site_id') == self.site_id and
                 self.journal.get('workspace_id') == self.workspace_id, 'journal_workspace_mismatch')
         self.identity = None
+        self.environments = {}
 
     def record(self, **changes):
         with self.data_lock:
@@ -147,14 +167,34 @@ class Session:
         return result
 
     def authenticate(self):
-        profile = self.tool('hp_profile', {})['structuredContent']
-        sites = self.tool('hp_list_sites', {})['structuredContent'].get('sites')
-        need(isinstance(profile.get('subject'), str) and self.site_id in profile.get('sites', []), 'account_site_mismatch')
-        need(not self.journal.get('subject') or self.journal['subject'] == profile['subject'], 'account_changed')
-        need(isinstance(sites, list), 'account_site_mismatch')
-        site = next((site for site in sites if site.get('site_id') == self.site_id), None)
-        need(site is not None, 'account_site_mismatch')
-        self.identity = {'email': profile.get('email', ''), 'site_name': site.get('name', self.site_id)}
+        try:
+            profile = self.tool('hp_profile', {})['structuredContent']
+            sites = self.tool('hp_list_sites', {})['structuredContent'].get('sites')
+            need(isinstance(profile.get('subject'), str) and self.site_id in profile.get('sites', []), 'account_site_mismatch')
+            need(not self.journal.get('subject') or self.journal['subject'] == profile['subject'], 'account_changed')
+            need(isinstance(sites, list), 'account_site_mismatch')
+            site = next((site for site in sites if site.get('site_id') == self.site_id), None)
+            need(site is not None, 'account_site_mismatch')
+        except Exception:
+            with self.data_lock:
+                self.identity = None
+                self.environments = {}
+                self.confirmation = None
+            raise
+        identity = {'email': profile.get('email', ''), 'site_name': site.get('name', self.site_id)}
+        deployments = site.get('deployments') or {}
+        environments = {}
+        for environment in ('dev', 'production'):
+            record = deployments.get(environment) if isinstance(deployments, dict) else None
+            timestamp = record.get('updated_at') if isinstance(record, dict) else None
+            version = record.get('version') if isinstance(record, dict) else None
+            environments[environment] = {
+                'updated_at': timestamp if type(timestamp) is int and timestamp > 0 else None,
+                'version': version if type(version) is int and version > 0 else None,
+            }
+        with self.data_lock:
+            self.identity = identity
+            self.environments = environments
         self.record(subject=profile['subject'])
         return profile
 
@@ -184,6 +224,10 @@ class Session:
             return
         result = self.tool('hp_get_confirmation', {'approval_id': saved['binding']['approval_id']})['structuredContent']
         need(binding(result) == saved['binding'], 'confirmation_changed')
+        details = publication_details(result.get('publication_details'))
+        if details is not None and details != saved.get('publication_details'):
+            saved = {**saved, 'publication_details': details}
+            self.record(confirmation=saved)
         if result['state'] in ('accepted', 'already_requested'):
             operation = result.get('operation')
             need(isinstance(operation, dict) and operation.get('site_id') == self.site_id and operation.get('kind') == 'publish', 'operation_mismatch')
@@ -260,6 +304,7 @@ class Session:
         https(data['preview_url']); https(data['production_url'])
         need(data['preview_url'] == preview['preview_url'], 'confirmation_changed')
         public = {name: data[name] for name in ('site_name', 'summary', 'preview_url', 'production_url', 'expires_at')}
+        public['publication_details'] = publication_details(data.get('publication_details'))
         self.confirmation = {'nonce': nonce, 'binding': expected, 'local': local, **public}
         self.record(confirmation={'state': 'prepared', 'binding': expected, **public})
 
@@ -369,7 +414,9 @@ class Session:
         with self.data_lock:
             saved = self.journal.get('confirmation')
             public = {'site_id': self.site_id, 'workspace_id': self.workspace_id, 'local': local,
-                'identity': self.identity, 'operation': self.journal.get('preview_operation'),
+                'identity': self.identity, 'environments': self.environments, 'operation': self.journal.get('preview_operation'),
+                'readback_errors': [code for code in self.journal.get('readback_errors', [])
+                    if code in ('operation_readback_unavailable', 'confirmation_readback_unavailable')],
                 'confirmation': saved, 'can_confirm': bool(self.confirmation and saved and saved['state'] == 'prepared' and local.get('ready') and not local.get('dirty') and not local.get('pending') and self.confirmation['expires_at'] > self.clock() and local.get('tree_sha256') == self.confirmation['local']['tree_sha256'] and local.get('saved_commit') == self.confirmation['local']['saved_commit'])}
         # Journal never contains nonce or full prepare response.
         return public

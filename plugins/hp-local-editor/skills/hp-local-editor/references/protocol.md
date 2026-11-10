@@ -25,9 +25,17 @@ An internally valid ZIP cannot establish its own provenance. The local helper
 checks consistency; authenticated receipt origin is the host/service boundary.
 The original result is preserved under `.hp/open-receipt.json`.
 
-Download only the result's `snapshot_file_id`; upload a changes ZIP only to its
-`upload_folder_id`. Compare the real connected Drive profile with `hp_profile`
-before transfer. A pasted folder identifier or editable document is not authority.
+For the native plugin, `download` requests `hp_download_workspace` for that
+owned workspace and consumes its short-lived URL only in private MCP metadata.
+The downloaded bytes must still match this exact receipt before initialization.
+`upload` calls `hp_prepare_upload` with the pending package’s original operation,
+site, workspace, base, digest and size. Its signed PUT binds length, checksum,
+create-only and encryption headers. Submit its returned `bundle_file_id` to the
+existing save operation. Uploading is not saving or dev/prod publication.
+
+The old `snapshot_file_id` and `upload_folder_id` fields remain for compatibility
+and operator Drive storage. The native plugin does not need customer Drive access.
+Never substitute a pasted URL, arbitrary folder or caller-chosen storage key.
 
 ## Changes
 

@@ -1,21 +1,49 @@
 ---
 name: hp-local-editor
-description: Edit a managed static website locally, preview file changes immediately, and save or confirm verified site updates through HP local editor. No customer Git installation or GitHub account is required.
+description: Help a non-engineer edit a managed homepage by conversation. Prepare the workspace and open local preview automatically, then move to dev and production only after the user’s separate checks. No customer Git or additional runtime installation is required with the native package.
 ---
 
 # Local homepage editing
 
-Use the bundled Python 3 tools on macOS or Linux; Windows is not supported.
+Use the native distribution’s `bin/hp` from the installed plugin root. It includes
+the runtime for its labelled OS/architecture. Windows is not supported.
+The source archive alone is a developer package, not the customer installer.
+If `bin/hp` is missing or incompatible, report an incomplete installation to the
+operator; do not ask the customer to install Python, Node, Git or a separate CLI.
 The package helper `hp_local_editor.py` never invokes Git, installs dependencies,
 runs supplied scripts, or makes network requests. The separate `hp_preview.py`
 launcher serves a loopback preview and uses the installed Codex app-server for
-allowlisted HP tools without starting a model turn or reading credentials.
+allowlisted HP tools. Its chat uses the desktop runtime with existing ChatGPT login
+to propose bounded local text edits; it never parses or copies credentials. The
+editing model has no HP tools. Explicit dev quick replies save the exact candidate
+through the existing service before preparing dev.
 Remote operations use the authenticated HP service below. Read [the wire contract](references/protocol.md) when
 integrating a service or diagnosing rejected packages.
 
+## Customer guide
+
+For onboarding, ZIP installation, or explaining the current UI, read
+[the Japanese customer guide](references/customer-guide.md). Guide the customer
+through the installed desktop app and existing Google connection. The local
+browser chat is the primary editing surface after startup.
+
 ## Plugin setup
 
-For a setup request, confirm macOS/Linux and Python 3, then discover the plugin's
+Preserve the user's complete request through installation and login. For
+“導入して、編集を始めたい”, completion means an authenticated site selected and
+its local browser editor open. After connection succeeds, continue the already
+requested editing start. `doctor` proves runtime availability only.
+
+Check the current version and loaded plugin capabilities first. Continue when
+the installed version is available in the host. Request restart only when the new
+files remain unloaded and supported reload mechanisms cannot resolve it.
+When the host requires a restart or the user's Google login, report the exact
+remaining user action and ask them to return to the same conversation with
+“続けて”. Continue the original request when they return. If the host opens a new
+setup conversation, use the user's current editing-start request there. Do not
+present a runtime check as successful Google connection or an opened editor.
+
+For a connection or editing-start request, run the bundled `bin/hp doctor`, then discover the plugin's
 HP control tools. The configured endpoint is `https://hp-control.simy.one/mcp`.
 Installing this package is not evidence of a working connection. Add only the
 requested plugin settings, preserving existing configuration; do not invent an
@@ -25,31 +53,83 @@ Google login in the user's own UI, and verify `hp_profile` plus `hp_list_sites`.
 The server selects the validated Google subject and site roles; never supply a
 subject or repository as a tool argument.
 
-Connect the Google Drive plugin separately for snapshot download and changes-ZIP
-upload. Read its actual connected profile and compare its verified account email
-to `hp_profile.email`; compare the Google subject too when the connector exposes
-the same identifier (a Drive permission ID is not an OIDC subject). An email alias
-is not a separate Google account. If the account binding cannot be established,
-stop before transferring files. Use exactly `upload_folder_id` from the
-authenticated completed open-workspace `result`; do not substitute a pasted or
-guessed folder, search for a similar name, or widen Drive permissions. Missing access or setup is a concrete
-setup gap, not a reason to fall back to the old spreadsheet intake skill.
+Use HP’s authenticated `hp_download_workspace` / `hp_prepare_upload` through the
+bundled transfer commands for file transport. No customer Drive plugin is needed.
+The desktop app’s bundled Codex runtime uses the existing HP connection; do not
+install another CLI or copy its credentials. If an actual host cannot reuse the
+connection, identify that setup gap rather than declaring it connected. Compare
+the authenticated profile used in this chat with the local control’s profile.
+The service binds transfers to the caller’s site/workspace and immutable package.
+Private transfer URLs stay inside the helper, never chat, logs or public receipts.
+If direct transport is unavailable, the operator must enable the compatible
+service; do not silently fall back to extra plugins or the old intake skill.
 
 Before claiming support on a Codex host, verify OAuth discovery/DCR, private
 result metadata and app-only confirmation there. If a host needs a registered
 MCP mapping, use its actual approved ID and keep personal registrations out of
 the public package. Draft saving and publication are separate; service gates and
 the user's exact-artifact confirmation govern publication.
-A setup-only request does not open a workspace, save a draft, or publish.
+For install-only requests, verify the installed version in the host and stop at
+that scope. For connection-only requests, finish with authenticated profile and
+site readback. Preserve an already-requested editing start through either phase.
+
+## Customer experience: local, dev, production
+
+When the customer says “HP編集を始める” or, for example, “診療時間を変更したい”, handle the
+preparation yourself. Verify the connected profile and available sites. Use the
+named site, or the sole available site; ask the site’s name only if ambiguous.
+Reuse the current validated workspace, preserving pending work. If none exists,
+request a snapshot and initialize a dedicated folder under the user’s current HP
+project (or `~/Documents/HP編集/<site_id>` when no project was designated). Never
+overwrite an existing workspace to make it look fresh. The customer need not
+choose paths, start a terminal, run commands or know skill/tool names.
+
+Start local preview as part of the editing request. The launcher opens its actual
+URL in the default browser automatically. If a live preview already exists, reuse
+its validated URL and open it instead of starting a duplicate. An editing-start
+request needs no file modification before showing the page.
+A bottom-right icon opens the local editing chat. The user can continue there
+without switching back to the app. This is an HP-specific conversation whose
+history is stored in the workspace, not a writable clone of this desktop thread.
+Explain the change in ordinary Japanese. Do not require a separate “start server”
+request. Follow these boundaries even if the customer originally asked to publish:
+
+1. **手元で確認**: edit and show the local result; do not change dev or production.
+2. After the customer accepts this local version and requests the next stage,
+   save the draft, read back and accept the exact receipt, then prepare **確認用サイト
+   (dev)**. A human click on the local menu’s dev-preparation button is also that
+   stage’s request. The widget saves the immutable local candidate first when
+   needed, then prepares dev. Verify completion and
+   open the remote URL for the customer to check; local success is not dev proof.
+3. After the customer checks that dev version, prepare its publication card/dialog.
+   **本番公開** requires the customer’s own exact-artifact confirmation click.
+   Local approval or a request to prepare dev does not authorize production.
+
+If files or the publication target change after either check, show the changed
+version again. Explain progress using these three stages; keep IDs, CLI commands,
+repository details and hashes out of the normal user flow. Keep the technical
+receipts for verification and interruption recovery. Never click confirmation on
+the customer’s behalf or automatically promote through all three stages.
 
 ## Immediate local preview and two confirmation surfaces
 
 For local display or floating controls, read [local preview](references/local-preview.md).
-Launch the installed `scripts/hp_preview.py` with the existing validated workspace.
-Open the exact printed loopback URL; edits under `site/` reload automatically.
+Launch the installed `bin/hp preview` with the existing validated workspace.
+The launcher opens the loopback URL automatically; edits under `site/` reload automatically.
+If automatic opening fails, open the exact printed URL for the customer.
+A successful launch command and a live URL establish server readiness; confirm
+browser display with available host evidence. If browser observation is unavailable,
+provide the live URL and distinguish the opening request from observed display.
 The local shell keeps controls separate from the sandboxed site. Do not inject
 publication controls or credentials into site files. Local preview requires no
 cloud save or deployment.
+
+The local widget labels are 確認用に反映, 確認用サイトを開く, and 公開する.
+Explain 確認用 / 公開中 as content versions, not deployment timestamps. A version
+belongs to a verified artifact and is reused when it is published. Display dates
+only as supplementary information. The publication dialog shows the source-to-target
+version transition and bound change summary. A completed result shows its changes
+and public link. Details and summaries never grant publication authority.
 
 The conversation card and local confirmation dialog use the same server approval
 and operation records. Use the supported surface the user chooses; do not claim a
@@ -65,6 +145,7 @@ Discover the actual tool handles; these are their service-level names:
 | --- | --- |
 | Verify authenticated identity and sites | `hp_profile`, `hp_list_sites` |
 | Request an editable snapshot | `hp_open_workspace` |
+| Download / upload with the bundled helper | `hp_download_workspace`, `hp_prepare_upload` |
 | Read the durable operation result | `hp_get_operation` |
 | Save an uploaded changes ZIP | `hp_save_draft` |
 | Prepare a verified preview | `hp_submit_preview` |
@@ -77,8 +158,8 @@ Discover the actual tool handles; these are their service-level names:
 
 Keep operation IDs stable on retries. For `hp_save_draft`, use exactly the ID
 returned by local `pack`, not a newly generated ID. The input bundle hash is the
-helper's `bundle_sha256` and the file ID is the uploaded ZIP in that exact
-open-result `upload_folder_id`. A queued/running operation has not saved or published yet.
+helper's `bundle_sha256` and `bundle_file_id` is returned by the bundled `upload`
+command for those same pending bytes. A queued/running operation has not saved or published yet.
 
 Keep public control requests and results in a local `control-receipts/` directory
 beside the site workspace so a new Codex session can recover the same operation
@@ -87,7 +168,7 @@ URLs, or private confirmation metadata into them.
 
 For an open-workspace operation, read its `result` only after authenticated
 completion and save that exact `kind: "workspace"` object as `open-result.json`.
-Download exactly its `snapshot_file_id`, then validate the snapshot against that
+Download that owned workspace with the bundled `download` command, then validate it against that
 receipt using `init` below. The helper checks the ZIP
 `snapshot_sha256` plus manifest `site_id`, `workspace_id`, and `base_commit` before
 creating any workspace or lock metadata. A self-consistent ZIP is insufficient
@@ -99,13 +180,14 @@ saved receipt: `schema_version`, `kind: "saved"`, `site_id`, `workspace_id`,
 receipt to `accept`; all identity/base/hash fields must match the pending package.
 Reporting/notification problems do not authorize resending a save or publication.
 
-Commands below are relative to this installed skill directory; use its actual
-absolute helper path when the user's site workspace is elsewhere.
+Commands below are relative to the installed plugin root; Codex resolves the
+actual absolute path and executes them. The customer does not run them manually.
 
 Initialize a new dedicated workspace from a service-provided snapshot:
 
 ```sh
-python3 scripts/hp_local_editor.py init snapshot.zip workspace --receipt open-result.json
+bin/hp download open-result.json snapshot.zip
+bin/hp init snapshot.zip workspace --receipt open-result.json
 ```
 
 Edit ordinary static files under `workspace/site/`. Keep `.hp/` private and
@@ -122,14 +204,15 @@ Write a concise change summary from the actual diff and the user's request;
 pass it to `pack --summary`. Do not copy the whole conversation, email addresses
 or credentials into it. The server adds trusted operation metadata and supplies
 a deterministic fallback title if the summary is absent. A title never authorizes
-publication. During an authorized editing task, save a draft after each coherent
-group of edits and before ending the work; setup-only or discussion-only requests
-do not authorize draft writes. Report saved status only after the exact receipt
+publication. During an authorized editing task, follow the local/dev/production checks above;
+save before preparing dev, or when the user explicitly asks to save a draft.
+Setup-only, local-only or discussion-only requests do not authorize draft writes. Report saved status only after the exact receipt
 has been read back and accepted locally.
 
 ```sh
-python3 scripts/hp_local_editor.py status workspace --diff
-python3 scripts/hp_local_editor.py pack workspace changes.zip --summary 'Update opening hours'
+bin/hp status workspace --diff
+bin/hp pack workspace changes.zip --summary 'Update opening hours'
+bin/hp upload workspace
 ```
 
 The output ZIP must be outside the workspace. Existing output files are accepted
@@ -147,8 +230,8 @@ bundle and be rejected. A save receipt acknowledges that exact
 package, not later edits. After receiving the matching saved receipt:
 
 ```sh
-python3 scripts/hp_local_editor.py accept workspace saved-receipt.json
-python3 scripts/hp_local_editor.py status workspace --diff
+bin/hp accept workspace saved-receipt.json
+bin/hp status workspace --diff
 ```
 
 Acceptance advances the baseline to the saved pending candidate and preserves
