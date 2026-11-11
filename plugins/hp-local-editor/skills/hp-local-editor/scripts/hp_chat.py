@@ -4,6 +4,7 @@ The model has no publication tools. Dev/save operations use the existing HP
 protocol separately. Requests are journaled before starting; lost replies never
 silently start a second model turn or overwrite a newer local edit.
 """
+from collections import Counter
 import base64
 import fcntl
 import hashlib
@@ -172,6 +173,29 @@ class ActiveContent(HTMLParser):
         return self.tokens
 
 
+# Browsers and Python's HTMLParser disagree on comments, raw-text elements,
+# self-closing raw-text tags and malformed attributes, so a token comparison
+# alone cannot prove an edit inert. Every markup segment the chat adds or
+# removes must be a plain, well-formed layout tag; anything else (comments,
+# declarations, raw-text/foreign elements, unquoted or event attributes, a
+# bare "<" in text) needs Codex review.
+MARKUP_SEGMENT = re.compile(r'<[^>]*>?')
+SAFE_SEGMENT = re.compile(
+    r'</?(?:p|br|hr|strong|em|b|i|u|s|small|mark|span|div|section|article|header|footer|nav|main|aside'
+    r'|ul|ol|li|dl|dt|dd|h[1-6]|a|img|picture|figure|figcaption|blockquote|table|thead|tbody|tfoot|tr|td|th'
+    r'|caption|address|time)'
+    r'(?:\s+(?!on)[a-zA-Z][a-zA-Z0-9-]*="[^"<>`]*")*\s*>\Z', re.I)
+RAWTEXT_SELF_CLOSING = re.compile(
+    r'<(?:script|style|textarea|title|xmp|noscript|noembed|noframes|iframe|plaintext|template)\b[^>]*/\s*>', re.I)
+
+
+def validate_markup_segments(before,after):
+    old,new=Counter(MARKUP_SEGMENT.findall(before)),Counter(MARKUP_SEGMENT.findall(after))
+    changed=list((new-old).elements())+list((old-new).elements())
+    need(all(SAFE_SEGMENT.match(segment) for segment in changed),'active_content_requires_codex')
+    need(not RAWTEXT_SELF_CLOSING.search(before+after),'active_content_requires_codex')
+
+
 def validate_content(before,after,path):
     # Chat changes text/layout, not executable integrations. Preserve existing
     # scripts and forms exactly, and never introduce an external URL silently.
@@ -181,6 +205,7 @@ def validate_content(before,after,path):
     need(urls(after)<=urls(before),'active_content_requires_codex')
     if Path(path).suffix.lower() in ('.html','.svg'):
         need(ActiveContent().scan(before)==ActiveContent().scan(after),'active_content_requires_codex')
+        validate_markup_segments(before,after)
     need(not re.search(r'(?:javascript|vbscript)\s*:',after,re.I) or after==before,'active_content_requires_codex')
 
 

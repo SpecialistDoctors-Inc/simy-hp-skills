@@ -131,6 +131,18 @@ class ChatTests(unittest.TestCase):
         for replacement in ['<script>alert(1)</script>','<img src="https://track.invalid/p">','<a href="java&#x73;cript:alert(1)">click</a>','<form action="/send"></form>']:
             with self.assertRaises(ChatError):proposal({'index.html':before.encode()},{'reply':'ok','edits':[{'path':'index.html','old_text':before,'new_text':replacement}]})
 
+    def test_comment_and_self_closing_script_differentials_are_rejected(self):
+        cases=[('<!-- -- ><img src=x onerror=alert(1)>','<!-- -- >','<!-- -->'),
+               ('<script></script>','<script></script>','<script/>alert(1)</script>'),
+               ('<script/>void(0)</script>','void(0)','alert(1)')]
+        for before,old,new in cases:
+            with self.subTest(before=before), self.assertRaises(ChatError):
+                proposal({'index.html':before.encode()},{'reply':'ok','edits':[{'path':'index.html','old_text':old,'new_text':new}]})
+
+    def test_plain_layout_markup_can_be_added(self):
+        before='<p>Old</p>'
+        self.assertTrue(proposal({'index.html':before.encode()},{'reply':'ok','edits':[{'path':'index.html','old_text':before,'new_text':'<h2 class="lead">New</h2><p>Hours<br>9:00</p>'}]}))
+
     def test_text_inside_existing_context_elements_can_be_edited(self):
         before='<title>Old clinic</title><noscript><p>Old</p></noscript>'
         for old,new in [('Old clinic','New clinic'),('<p>Old</p>','<p>New</p>')]:
@@ -189,7 +201,9 @@ class ChatTests(unittest.TestCase):
                    '<svg><style><img src=x onerror=alert(1)></style></svg>',
                    '<!-- --!><img src=x onerror=alert(1)><!-- -->',
                    '<![CDATA[><img src=x onerror=alert(1)>]]>',
-                   '<p>x</p><img src=x onerror=alert(1)']
+                   '<p>x</p><img src=x onerror=alert(1)',
+                   '<script/>alert(1)</script>',
+                   '<p>a < b</p>']
         for attack in attacks:
             with self.subTest(attack=attack), self.assertRaises(ChatError):
                 proposal({'index.html': b'<p>Old</p>'}, {'reply': 'ok', 'edits': [
