@@ -5,6 +5,7 @@ protocol separately. Requests are journaled before starting; lost replies never
 silently start a second model turn or overwrite a newer local edit.
 """
 from collections import Counter
+from difflib import SequenceMatcher
 import base64
 import fcntl
 import hashlib
@@ -170,7 +171,11 @@ class ActiveContent(HTMLParser):
         if tag=='script':self.script=False
         if tag=='style':self.style=False
     def handle_data(self,text):
-        if self.script:self.tokens.append(('script-body',text))
+        if self.script:
+            self.tokens.append(('script-body',text))
+            # "<!--<script>" double-escapes the script in HTML5, which then
+            # ends at a later </script> than Python's parser sees.
+            if re.search(r'<!--|<script',text,re.I):self.unsafe=True
         if self.style:self.tokens.append(('style-body',text))
     # Browsers end comments/CDATA differently (e.g. `--!>`, CDATA outside
     # foreign content), so their content must stay byte-identical.
@@ -201,9 +206,18 @@ SAFE_SEGMENT = re.compile(
 
 
 def validate_markup_segments(before,after):
-    old,new=Counter(MARKUP_SEGMENT.findall(before)),Counter(MARKUP_SEGMENT.findall(after))
-    changed=list((new-old).elements())+list((old-new).elements())
-    need(all(SAFE_SEGMENT.match(segment) for segment in changed),'active_content_requires_codex')
+    # Compare the ordered sequence, not counts: moving a protected tag (for
+    # example an <input> into another <form>) changes behaviour too.
+    old,new=MARKUP_SEGMENT.findall(before),MARKUP_SEGMENT.findall(after)
+    for op,i1,i2,j1,j2 in SequenceMatcher(None,old,new,autojunk=False).get_opcodes():
+        if op!='equal':
+            need(all(SAFE_SEGMENT.match(segment) for segment in old[i1:i2]+new[j1:j2]),
+                 'active_content_requires_codex')
+
+
+# CSS constructs that load resources or run code. Their exact text must not
+# change; colours, sizes and other declarations remain editable.
+CSS_RESOURCE = re.compile(r'(?:url|image-set|-webkit-image-set|image|cross-fade|element|expression)\s*\([^)]*\)?|@import[^;]*|behavior\s*:[^;]*|-moz-binding[^;]*', re.I)
 
 
 def validate_content(before,after,path):
@@ -213,6 +227,8 @@ def validate_content(before,after,path):
     need(escapes(after) <= escapes(before), 'active_content_requires_codex')
     urls=lambda text:set(re.findall(r'(?:https?:)?//[^\s<>"\']+',text))
     need(urls(after)<=urls(before),'active_content_requires_codex')
+    if Path(path).suffix.lower()=='.css':
+        need(Counter(CSS_RESOURCE.findall(before))==Counter(CSS_RESOURCE.findall(after)),'active_content_requires_codex')
     if Path(path).suffix.lower() in ('.html','.svg'):
         need(ActiveContent().scan(before)==ActiveContent().scan(after),'active_content_requires_codex')
         validate_markup_segments(before,after)

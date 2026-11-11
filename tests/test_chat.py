@@ -140,10 +140,20 @@ class ChatTests(unittest.TestCase):
                ('<p>Old</p>','<p>Old</p>','<p style="background-image:url(/x)">Old</p>'),
                ('<p>Old</p>','<p>Old</p>','<a href="/logout">Old</a>'),
                ('<p>Old</p>','<p>Old</p>','<img srcset="/a 1x, /b 2x">'),
-               ('<base href="https://example.invalid/"><p>Old</p>','<p>Old</p>','<img src="x">')]
+               ('<base href="https://example.invalid/"><p>Old</p>','<p>Old</p>','<img src="x">'),
+               ('<script><!--<script></script>\nvoid(0)\n</script>','void(0)','alert(1)'),
+               ('<form action="/search"></form><form action="/login" method="post"><input name="secret"><button>Login</button></form>',
+                '<form action="/search"></form><form action="/login" method="post"><input name="secret"><button>Login</button></form>',
+                '<form action="/search"><input name="secret"><button>Login</button></form><form action="/login" method="post"></form>')]
         for before,old,new in cases:
             with self.subTest(before=before), self.assertRaises(ChatError):
                 proposal({'index.html':before.encode()},{'reply':'ok','edits':[{'path':'index.html','old_text':old,'new_text':new}]})
+
+    def test_css_resource_loading_changes_are_rejected(self):
+        for new in ['p{background:url(/tracking)}','@import "/tracking.css";','p{background:image-set("/x" 1x)}']:
+            with self.subTest(new=new), self.assertRaises(ChatError):
+                proposal({'index.html':b'<p>x</p>','style.css':b'p{color:red}'},{'reply':'ok','edits':[{'path':'style.css','old_text':'p{color:red}','new_text':new}]})
+        self.assertTrue(proposal({'index.html':b'<p>x</p>','style.css':b'p{color:red;background:url(a.png)}'},{'reply':'ok','edits':[{'path':'style.css','old_text':'color:red','new_text':'color:navy'}]}))
 
     def test_plain_layout_markup_can_be_added(self):
         before='<p>Old</p>'
