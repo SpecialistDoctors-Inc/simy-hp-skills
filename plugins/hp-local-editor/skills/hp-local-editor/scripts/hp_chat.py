@@ -23,6 +23,7 @@ import uuid
 
 import hp_local_editor as editor
 from hp_codex_client import desktop_codex, desktop_environment
+from hp_preview_state import DefiniteRejection
 
 MAX_CONTEXT = 220000
 TEXT_SUFFIXES = {'.html', '.css', '.json', '.txt', '.svg'}
@@ -515,9 +516,21 @@ class Chat:
                 if row.get('save_request'):
                     request=row['save_request']
                     if not row.get('saved_result'):
-                        uploaded=with_local_lock_retry(lambda:hp_transfer.upload(session.client,self.root))
-                        need(all(uploaded[k]==request[k] for k in ('operation_id','bundle_file_id','bundle_sha256')),'save_binding_mismatch')
-                        session.tool('hp_save_draft',request)
+                        # An earlier attempt may have been admitted even though its
+                        # reply was lost. Admission moves the workspace head, so a
+                        # second prepare_upload would fail forever: reconcile the
+                        # journaled operation ID first and only upload if the
+                        # service has never seen it.
+                        try:
+                            session.tool('hp_get_operation',{'operation_id':request['operation_id']})
+                            admitted=True
+                        except DefiniteRejection as error:
+                            if str(error)!='operation_access_denied':raise
+                            admitted=False
+                        if not admitted:
+                            uploaded=with_local_lock_retry(lambda:hp_transfer.upload(session.client,self.root))
+                            need(all(uploaded[k]==request[k] for k in ('operation_id','bundle_file_id','bundle_sha256')),'save_binding_mismatch')
+                            session.tool('hp_save_draft',request)
                         deadline=time.monotonic()+600
                         while True:
                             result=session.tool('hp_get_operation',{'operation_id':request['operation_id']})['structuredContent']

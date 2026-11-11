@@ -81,6 +81,8 @@ class ChatTests(unittest.TestCase):
             if name=='hp_save_draft':saves.append(dict(args));return {'structuredContent':{'status':'queued'}}
             if name=='hp_get_operation' and saves and args['operation_id']==saves[0]['operation_id']:
                 req=saves[0];return {'structuredContent':{'operation_id':req['operation_id'],'site_id':'sample-site','kind':'save_draft','status':'completed','result':{'schema_version':1,'kind':'saved','site_id':req['site_id'],'workspace_id':req['workspace_id'],'operation_id':req['operation_id'],'base_commit':req['base_commit'],'saved_commit':'e'*40,'bundle_sha256':req['bundle_sha256']}}}
+            if name=='hp_get_operation' and not saves:
+                hp.calls.append((name,dict(args)));return {'isError':True,'structuredContent':{'error':'operation_access_denied'}}
             return original(name,args)
         hp.call=call
         def upload(client,root):
@@ -91,6 +93,35 @@ class ChatTests(unittest.TestCase):
         self.assertEqual(self.chat.public()['delivery']['status'],'completed');self.assertEqual(len(saves),1)
         self.assertEqual(hp.op['saved_commit'],'e'*40);self.assertEqual(editor.status(self.root)['changes'],[])
         self.assertFalse(any(name=='hp_confirm_publish' for name,args in hp.calls))
+    def test_lost_save_reply_reconciles_operation_instead_of_uploading_again(self):
+        self.submit();hp=FakeHP();session=Session(self.root,hp);saves=[];uploads=[];lose=[True]
+        original=hp.call
+        def call(name,args):
+            if name=='hp_save_draft':
+                saves.append(dict(args))
+                if lose:lose.clear();raise OSError('simulated lost save reply')
+                raise AssertionError('save must not be resubmitted')
+            if name=='hp_get_operation' and saves and args['operation_id']==saves[0]['operation_id']:
+                req=saves[0];return {'structuredContent':{'operation_id':req['operation_id'],'site_id':'sample-site','kind':'save_draft','status':'completed','result':{'schema_version':1,'kind':'saved','site_id':req['site_id'],'workspace_id':req['workspace_id'],'operation_id':req['operation_id'],'base_commit':req['base_commit'],'saved_commit':'e'*40,'bundle_sha256':req['bundle_sha256']}}}
+            if name=='hp_get_operation' and not saves:
+                return {'isError':True,'structuredContent':{'error':'operation_access_denied'}}
+            return original(name,args)
+        hp.call=call
+        def upload(client,root):
+            # The real service rejects a second prepare_upload once the save
+            # was admitted (workspace head moved).
+            if saves:raise RuntimeError('workspace_changed')
+            uploads.append(root)
+            _,hpdir,state,base=editor.load(root);meta,_,_=editor.pending(hpdir,state,base);uid=meta['manifest']['operation_id']
+            return {'operation_id':uid,'bundle_file_id':'hp-upload-'+uid,'bundle_sha256':meta['bundle_sha256']}
+        with patch('hp_transfer.upload',side_effect=upload):
+            self.chat.prepare_preview(session,session.snapshot()['revision']);self.chat.worker.join(5)
+            self.assertEqual(self.chat.public()['delivery']['status'],'failed')
+            self.chat.prepare_preview(session,session.snapshot(force=True)['revision']);self.chat.worker.join(5)
+        self.assertEqual(self.chat.public()['delivery']['status'],'completed')
+        self.assertEqual((len(saves),len(uploads)),(1,1))
+        self.assertEqual(editor.status(self.root)['changes'],[])
+        self.assertTrue(any(name=='hp_submit_preview' for name,args in hp.calls))
 
     def test_apply_failure_retries_saved_candidate_without_model(self):
         with patch('hp_chat.apply_candidate',side_effect=OSError('disk temporarily unavailable')):
