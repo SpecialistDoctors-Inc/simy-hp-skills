@@ -131,6 +131,12 @@ class ChatTests(unittest.TestCase):
         for replacement in ['<script>alert(1)</script>','<img src="https://track.invalid/p">','<a href="java&#x73;cript:alert(1)">click</a>','<form action="/send"></form>']:
             with self.assertRaises(ChatError):proposal({'index.html':before.encode()},{'reply':'ok','edits':[{'path':'index.html','old_text':before,'new_text':replacement}]})
 
+    def test_text_inside_existing_context_elements_can_be_edited(self):
+        before='<title>Old clinic</title><noscript><p>Old</p></noscript>'
+        for old,new in [('Old clinic','New clinic'),('<p>Old</p>','<p>New</p>')]:
+            with self.subTest(old=old):
+                self.assertTrue(proposal({'index.html':before.encode()},{'reply':'ok','edits':[{'path':'index.html','old_text':old,'new_text':new}]}))
+
     def test_existing_data_images_are_preserved_when_editing_text(self):
         before='<img src="data:image/png;base64,AAAA"><p>Old</p>'
         self.assertTrue(proposal({'index.html':before.encode()},{'reply':'ok','edits':[{'path':'index.html','old_text':'Old','new_text':'New'}]}))
@@ -174,7 +180,13 @@ class ChatTests(unittest.TestCase):
         attacks = ['<a href="java&#9;script:alert(1)">click</a>',
                    '<img srcset="&#47;&#47;track.invalid/p.gif">',
                    '<p style="background:url(&#47;&#47;track.invalid/p)">x</p>',
-                   r'<style>@import "\2f\2f track.invalid/x.css"</style>']
+                   r'<style>@import "\2f\2f track.invalid/x.css"</style>',
+                   # Python's parser sees a quoted title; browsers close
+                   # <noscript> and run the onerror handler.
+                   '<noscript><p title="</noscript><img src=x onerror=alert(1)>">',
+                   '<p title="</p><img src=x onerror=alert(1)>">x</p>',
+                   '<textarea></textarea><p>x</p>',
+                   '<svg><style><img src=x onerror=alert(1)></style></svg>']
         for attack in attacks:
             with self.subTest(attack=attack), self.assertRaises(ChatError):
                 proposal({'index.html': b'<p>Old</p>'}, {'reply': 'ok', 'edits': [

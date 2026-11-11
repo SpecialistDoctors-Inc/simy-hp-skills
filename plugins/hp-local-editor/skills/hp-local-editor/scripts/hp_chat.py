@@ -129,12 +129,25 @@ def with_local_lock_retry(call):
             time.sleep(.05)
 
 
+# Elements whose content browsers parse differently from Python's HTMLParser
+# (raw text, scripting-dependent noscript, foreign SVG/MathML, templates).
+# Markup inside them can escape into executable HTML, e.g.
+# <noscript><p title="</noscript><img onerror=...>">, so any change to them
+# needs Codex review rather than the chat fast path.
+CONTEXT_TAGS = ('noscript','noembed','noframes','xmp','plaintext','template','textarea',
+                'title','style','svg','math','select','option','iframe')
+
+
 class ActiveContent(HTMLParser):
     def __init__(self):super().__init__();self.tokens=[];self.script=False
     def handle_starttag(self,tag,attrs):
-        if tag in ('script','iframe','form','object','embed','base','meta','link'):
+        if tag in ('script','iframe','form','object','embed','base','meta','link')+CONTEXT_TAGS:
             self.tokens.append((tag,tuple(sorted(attrs))))
         self.tokens.extend(('event',tag,key,value) for key,value in attrs if key.startswith('on'))
+        # An attribute value containing markup is harmless only when every
+        # parser agrees it is quoted text; treat it as active content.
+        self.tokens.extend(('markup-attribute',tag,key,value) for key,value in attrs
+                           if value and re.search(r'[<>]',value))
         for key,value in attrs:
             if value and key in ('href','src','action','xlink:href','srcset','poster','background','formaction','ping','data','style','to','from','values'):
                 value = re.sub(r'[\x00-\x20]', '', value)
@@ -142,6 +155,7 @@ class ActiveContent(HTMLParser):
                     self.tokens.append(('remote-attribute',tag,key,value))
         if tag=='script':self.script=True
     def handle_endtag(self,tag):
+        if tag in CONTEXT_TAGS:self.tokens.append(('end',tag))
         if tag=='script':self.script=False
     def handle_data(self,text):
         if self.script:self.tokens.append(('script-body',text))
