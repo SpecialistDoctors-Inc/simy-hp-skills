@@ -186,7 +186,10 @@ class ChatTests(unittest.TestCase):
                    '<noscript><p title="</noscript><img src=x onerror=alert(1)>">',
                    '<p title="</p><img src=x onerror=alert(1)>">x</p>',
                    '<textarea></textarea><p>x</p>',
-                   '<svg><style><img src=x onerror=alert(1)></style></svg>']
+                   '<svg><style><img src=x onerror=alert(1)></style></svg>',
+                   '<!-- --!><img src=x onerror=alert(1)><!-- -->',
+                   '<![CDATA[><img src=x onerror=alert(1)>]]>',
+                   '<p>x</p><img src=x onerror=alert(1)']
         for attack in attacks:
             with self.subTest(attack=attack), self.assertRaises(ChatError):
                 proposal({'index.html': b'<p>Old</p>'}, {'reply': 'ok', 'edits': [

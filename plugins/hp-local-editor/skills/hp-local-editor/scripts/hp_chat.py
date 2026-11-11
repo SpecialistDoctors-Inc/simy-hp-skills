@@ -159,6 +159,17 @@ class ActiveContent(HTMLParser):
         if tag=='script':self.script=False
     def handle_data(self,text):
         if self.script:self.tokens.append(('script-body',text))
+    # Browsers end comments/CDATA differently (e.g. `--!>`, CDATA outside
+    # foreign content), so their content must stay byte-identical.
+    def handle_comment(self,data):self.tokens.append(('comment',data))
+    def handle_decl(self,data):self.tokens.append(('decl',data))
+    def unknown_decl(self,data):self.tokens.append(('decl',data))
+    def handle_pi(self,data):self.tokens.append(('pi',data))
+    def scan(self,text):
+        self.feed(text)
+        # Input the parser could not finish is not trusted as plain text.
+        if self.rawdata:self.tokens.append(('unparsed',self.rawdata))
+        return self.tokens
 
 
 def validate_content(before,after,path):
@@ -169,8 +180,7 @@ def validate_content(before,after,path):
     urls=lambda text:set(re.findall(r'(?:https?:)?//[^\s<>"\']+',text))
     need(urls(after)<=urls(before),'active_content_requires_codex')
     if Path(path).suffix.lower() in ('.html','.svg'):
-        old,new=ActiveContent(),ActiveContent();old.feed(before);new.feed(after)
-        need(old.tokens==new.tokens,'active_content_requires_codex')
+        need(ActiveContent().scan(before)==ActiveContent().scan(after),'active_content_requires_codex')
     need(not re.search(r'(?:javascript|vbscript)\s*:',after,re.I) or after==before,'active_content_requires_codex')
 
 
