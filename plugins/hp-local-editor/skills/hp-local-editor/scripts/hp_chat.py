@@ -139,8 +139,18 @@ CONTEXT_TAGS = ('noscript','noembed','noframes','xmp','plaintext','template','te
                 'title','style','svg','math','select','option','iframe')
 
 
+URL_ATTRIBUTES = ('href','src','action','xlink:href','srcset','poster','background','formaction','ping',
+                  'data','cite','longdesc','usemap','manifest','to','from','values')
+
+
 class ActiveContent(HTMLParser):
-    def __init__(self):super().__init__();self.tokens=[];self.script=False
+    def __init__(self):super().__init__();self.tokens=[];self.script=False;self.style=False;self.unsafe=False
+    def handle_startendtag(self,tag,attrs):
+        # Browsers ignore "/>" on raw-text elements, so content after it is
+        # still script/style/etc. Python closes it; never trust such input.
+        if tag in ('script',)+CONTEXT_TAGS:self.unsafe=True
+        self.handle_starttag(tag,attrs)
+        if tag not in ('script',)+CONTEXT_TAGS:self.handle_endtag(tag)
     def handle_starttag(self,tag,attrs):
         if tag in ('script','iframe','form','object','embed','base','meta','link')+CONTEXT_TAGS:
             self.tokens.append((tag,tuple(sorted(attrs))))
@@ -149,17 +159,19 @@ class ActiveContent(HTMLParser):
         # parser agrees it is quoted text; treat it as active content.
         self.tokens.extend(('markup-attribute',tag,key,value) for key,value in attrs
                            if value and re.search(r'[<>]',value))
-        for key,value in attrs:
-            if value and key in ('href','src','action','xlink:href','srcset','poster','background','formaction','ping','data','style','to','from','values'):
-                value = re.sub(r'[\x00-\x20]', '', value)
-                if re.search(r'(?:(?:https?|javascript|vbscript|data):|//)',value,re.I):
-                    self.tokens.append(('remote-attribute',tag,key,value))
+        # Resource and CSS attributes stay exactly as they were: relative
+        # URLs, <base> and CSS url()/@import can all load other resources.
+        self.tokens.extend(('resource-attribute',tag,key,value) for key,value in attrs
+                           if key in URL_ATTRIBUTES or key=='style')
         if tag=='script':self.script=True
+        if tag=='style':self.style=True
     def handle_endtag(self,tag):
         if tag in CONTEXT_TAGS:self.tokens.append(('end',tag))
         if tag=='script':self.script=False
+        if tag=='style':self.style=False
     def handle_data(self,text):
         if self.script:self.tokens.append(('script-body',text))
+        if self.style:self.tokens.append(('style-body',text))
     # Browsers end comments/CDATA differently (e.g. `--!>`, CDATA outside
     # foreign content), so their content must stay byte-identical.
     def handle_comment(self,data):self.tokens.append(('comment',data))
@@ -170,6 +182,7 @@ class ActiveContent(HTMLParser):
         self.feed(text)
         # Input the parser could not finish is not trusted as plain text.
         if self.rawdata:self.tokens.append(('unparsed',self.rawdata))
+        if self.unsafe:self.tokens.append(('unsafe',object()))  # never equal
         return self.tokens
 
 
@@ -184,16 +197,13 @@ SAFE_SEGMENT = re.compile(
     r'</?(?:p|br|hr|strong|em|b|i|u|s|small|mark|span|div|section|article|header|footer|nav|main|aside'
     r'|ul|ol|li|dl|dt|dd|h[1-6]|a|img|picture|figure|figcaption|blockquote|table|thead|tbody|tfoot|tr|td|th'
     r'|caption|address|time)'
-    r'(?:\s+(?!on)[a-zA-Z][a-zA-Z0-9-]*="[^"<>`]*")*\s*>\Z', re.I)
-RAWTEXT_SELF_CLOSING = re.compile(
-    r'<(?:script|style|textarea|title|xmp|noscript|noembed|noframes|iframe|plaintext|template)\b[^>]*/\s*>', re.I)
+    r'(?:\s+(?!on|style\b)[a-zA-Z][a-zA-Z0-9-]*="[^"<>`]*")*\s*>\Z', re.I)
 
 
 def validate_markup_segments(before,after):
     old,new=Counter(MARKUP_SEGMENT.findall(before)),Counter(MARKUP_SEGMENT.findall(after))
     changed=list((new-old).elements())+list((old-new).elements())
     need(all(SAFE_SEGMENT.match(segment) for segment in changed),'active_content_requires_codex')
-    need(not RAWTEXT_SELF_CLOSING.search(before+after),'active_content_requires_codex')
 
 
 def validate_content(before,after,path):

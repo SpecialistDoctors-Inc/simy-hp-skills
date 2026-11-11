@@ -134,7 +134,13 @@ class ChatTests(unittest.TestCase):
     def test_comment_and_self_closing_script_differentials_are_rejected(self):
         cases=[('<!-- -- ><img src=x onerror=alert(1)>','<!-- -- >','<!-- -->'),
                ('<script></script>','<script></script>','<script/>alert(1)</script>'),
-               ('<script/>void(0)</script>','void(0)','alert(1)')]
+               ('<script/>void(0)</script>','void(0)','alert(1)'),
+               ('<script data-x=">"/>void(0)</script>','void(0)','alert(1)'),
+               ('<style>p{color:red}</style>','p{color:red}','@import "/x.css";'),
+               ('<p>Old</p>','<p>Old</p>','<p style="background-image:url(/x)">Old</p>'),
+               ('<p>Old</p>','<p>Old</p>','<a href="/logout">Old</a>'),
+               ('<p>Old</p>','<p>Old</p>','<img srcset="/a 1x, /b 2x">'),
+               ('<base href="https://example.invalid/"><p>Old</p>','<p>Old</p>','<img src="x">')]
         for before,old,new in cases:
             with self.subTest(before=before), self.assertRaises(ChatError):
                 proposal({'index.html':before.encode()},{'reply':'ok','edits':[{'path':'index.html','old_text':old,'new_text':new}]})
