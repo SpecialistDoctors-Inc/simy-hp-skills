@@ -87,7 +87,7 @@ class CodexClient:
         self.reader = threading.Thread(target=self._read, daemon=True)
         self.reader.start()
         try:
-            self.rpc('initialize', {'clientInfo': {'name': 'hp-local-preview', 'version': '0.3.12'},
+            self.rpc('initialize', {'clientInfo': {'name': 'hp-local-preview', 'version': '0.3.13'},
                 'capabilities': {'experimentalApi': True, 'explicitGatewayOauth': True}})
             self._send({'method': 'initialized', 'params': {}})
             started = self.rpc('thread/start', {'cwd': str(self.directory), 'ephemeral': True,

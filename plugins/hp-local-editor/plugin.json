@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "hp-local-editor",
-  "version": "0.3.12",
+  "version": "0.3.13",
   "description": "Edit managed static files locally, preview saved file changes immediately, and use verified preview and publication controls.",
   "extensions": {
     "com.openai": {
@@ -86,7 +86,7 @@
         "commerce_description": "The plugin does not process payments or sell products. Managed-site eligibility is provisioned separately."
       },
       "publication": {
-        "release_notes": "0.3.12: ZIP-level installation instructions preserve an editing-start request through application restart and Google connection, then open the local editor for the permitted site."
+        "release_notes": "0.3.13: Conversation undo restores the recorded original file bytes, including emphasis and line breaks, without regenerating markup. Newer local changes remain protected."
       }
     }
   },
