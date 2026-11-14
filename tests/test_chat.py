@@ -313,6 +313,58 @@ class ChatTests(unittest.TestCase):
         self.assertEqual((self.root / 'site/index.html').read_text(), '<h1>Later edit</h1>')
         self.assertEqual(self.runner.calls, 1)
 
+    def test_conversation_undo_restores_exact_emphasis_breaks_and_whitespace(self):
+        source = b'<h1 id="hero-title">Before <span class="accent">care</span>,<br>\r\n  close to you.</h1>\r\n'
+        (self.root / 'site/index.html').write_bytes(source)
+        self.runner.answer = {'reply': 'Changed', 'undo_request_id': None, 'edits': [
+            {'path': 'index.html', 'old_text': source.decode(), 'new_text': '<h1 id="hero-title">Edited</h1>'}]}
+        target = self.submit()
+        (self.root / 'site/style.css').write_text('body { color: navy; }')
+        self.runner.answer = {'reply': 'Restored', 'edits': [], 'undo_request_id': target}
+        uid = str(uuid.uuid4())
+        self.chat.submit(uid, '以前の見出しに戻して'); self.chat.worker.join(5)
+        self.assertEqual((self.root / 'site/index.html').read_bytes(), source)
+        self.assertEqual((self.root / 'site/style.css').read_text(), 'body { color: navy; }')
+        self.assertEqual(self.chat.public()['requests'][-1]['status'], 'completed')
+        self.assertEqual(self.chat.public()['requests'][-2]['undo_status'], 'completed')
+        self.chat.submit(uid, '以前の見出しに戻して')
+        self.assertEqual(self.runner.calls, 2)
+        self.assertEqual((self.root / 'site/index.html').read_bytes(), source)
+
+    def test_conversation_undo_does_not_overwrite_subsequent_same_file_changes(self):
+        target = self.submit()
+        later = b'<h1>Newer customer work</h1>'
+        (self.root / 'site/index.html').write_bytes(later)
+        self.runner.answer = {'reply': 'Restored', 'edits': [], 'undo_request_id': target}
+        self.submit()
+        self.assertEqual((self.root / 'site/index.html').read_bytes(), later)
+        self.assertEqual(self.chat.public()['requests'][-1]['status'], 'conflict')
+        self.assertIsNone(self.chat.public()['requests'][-2]['undo_status'])
+
+    def test_conversation_undo_rejects_unknown_targets_and_mixed_edits(self):
+        target = self.submit()
+        current = (self.root / 'site/index.html').read_bytes()
+        for selected, edits in [(str(uuid.uuid4()), []), (target, [
+                {'path': 'index.html', 'old_text': '更新した見出し', 'new_text': 'Other edit'}])]:
+            self.runner.answer = {'reply': 'Restored', 'edits': edits, 'undo_request_id': selected}
+            self.submit()
+            self.assertEqual((self.root / 'site/index.html').read_bytes(), current)
+            self.assertEqual(self.chat.public()['requests'][-1]['status'], 'failed')
+
+    def test_conversation_undo_recovery_reuses_the_frozen_original_bytes(self):
+        original = (self.root / 'site/index.html').read_bytes()
+        target = self.submit()
+        self.runner.answer = {'reply': 'Restored', 'edits': [], 'undo_request_id': target}
+        with patch('hp_chat.apply_candidate', side_effect=OSError('interrupted undo')):
+            uid = self.submit()
+        self.assertEqual(self.chat.public()['requests'][-1]['status'], 'apply_pending')
+        self.chat.close(); self._cleanups.pop()
+        self.chat = Chat(self.root, self.runner); self.addCleanup(self.chat.close)
+        self.chat.submit(uid, '見出しを変更してください'); self.chat.worker.join(5)
+        self.assertEqual((self.root / 'site/index.html').read_bytes(), original)
+        self.assertEqual(self.runner.calls, 2)
+        self.assertEqual(self.chat.public()['requests'][-2]['undo_status'], 'completed')
+
     def test_undo_rejects_a_later_change_to_the_same_file(self):
         request_id = self.submit()
         (self.root / 'site/index.html').write_text('<h1>Later edit</h1>')
