@@ -60,6 +60,9 @@ if WINDOWS:
     _ntdll.NtCreateFile.argtypes = (ctypes.POINTER(wintypes.HANDLE), wintypes.DWORD, ctypes.POINTER(_ObjectAttributes),
                                     ctypes.POINTER(_IoStatusBlock), ctypes.c_void_p, wintypes.ULONG, wintypes.ULONG,
                                     wintypes.ULONG, wintypes.ULONG, ctypes.c_void_p, wintypes.ULONG)
+    _ntdll.NtSetInformationFile.restype = ctypes.c_long
+    _ntdll.NtSetInformationFile.argtypes = (wintypes.HANDLE, ctypes.POINTER(_IoStatusBlock), ctypes.c_void_p,
+                                            wintypes.ULONG, ctypes.c_int)
     _ntdll.RtlNtStatusToDosError.restype = wintypes.ULONG
     _ntdll.RtlNtStatusToDosError.argtypes = (ctypes.c_long,)
     _INVALID_HANDLE = wintypes.HANDLE(-1).value
@@ -75,7 +78,8 @@ if WINDOWS:
     _NT_DIRECTORY, _NT_NON_DIRECTORY, _NT_SYNCHRONOUS = 0x1, 0x40, 0x20
     _NT_OPEN_REPARSE_POINT = 0x00200000
     _OBJ_CASE_INSENSITIVE = 0x40
-    _FILE_RENAME_INFO, _FILE_DISPOSITION_INFO = 3, 4
+    _FILE_DISPOSITION_INFO = 4
+    _NT_FILE_RENAME_INFORMATION = 10
 else:
     import fcntl
 
@@ -259,17 +263,21 @@ def _commit(directory, temporary, name):
     temporary is a name (POSIX) or the open temporary file handle (Windows).
     """
     if WINDOWS:
+        # NtSetInformationFile, not kernel32: SetFileInformationByHandle rejects a
+        # RootDirectory and otherwise resolves the name against the current directory.
         encoded = name.encode('utf-16-le')
 
-        # Windows requires BufferSize >= sizeof(FILE_RENAME_INFO) (which already has
-        # one WCHAR plus padding) + FileNameLength, so reserve four spare WCHARs.
-        class _RenameInfo(ctypes.Structure):
+        class _RenameInformation(ctypes.Structure):
             _fields_ = [('ReplaceIfExists', wintypes.DWORD), ('RootDirectory', wintypes.HANDLE),
-                        ('FileNameLength', wintypes.DWORD), ('FileName', wintypes.WCHAR * (len(encoded) // 2 + 4))]
-        # The name is resolved relative to the held directory handle, never a path.
-        info = _RenameInfo(1, directory, len(encoded))
-        ctypes.memmove(ctypes.addressof(info) + _RenameInfo.FileName.offset, encoded, len(encoded))
-        _win_set_information(temporary, _FILE_RENAME_INFO, info)
+                        ('FileNameLength', wintypes.ULONG), ('FileName', wintypes.WCHAR * (len(encoded) // 2 + 1))]
+        info = _RenameInformation(1, directory, len(encoded))
+        ctypes.memmove(ctypes.addressof(info) + _RenameInformation.FileName.offset, encoded, len(encoded))
+        status_block = _IoStatusBlock()
+        status = _ntdll.NtSetInformationFile(temporary, ctypes.byref(status_block), ctypes.byref(info),
+                                             ctypes.sizeof(info), _NT_FILE_RENAME_INFORMATION)
+        if status < 0:
+            error = _ntdll.RtlNtStatusToDosError(status)
+            raise OSError(None, ctypes.FormatError(error), name, error)
     else:
         os.rename(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)
 
