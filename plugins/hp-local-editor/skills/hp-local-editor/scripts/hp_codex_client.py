@@ -90,6 +90,10 @@ def desktop_environment(environment=None):
     return result
 
 
+# The packaged plugin's HP endpoint origin (rewritten by the acceptance build).
+HP_ORIGIN = 'https://hp-control.simy.one'
+
+
 def select_hp_server(servers):
     matches = hp_servers(servers)
     if len(matches) != 1:
@@ -100,7 +104,7 @@ def select_hp_server(servers):
 
 
 def hp_servers(servers):
-    return [server for server in servers if server.get('httpOrigin') == 'https://hp-control.simy.one'
+    return [server for server in servers if server.get('httpOrigin') == HP_ORIGIN
             and server.get('runtimeStatus') != 'disabled']
 
 
