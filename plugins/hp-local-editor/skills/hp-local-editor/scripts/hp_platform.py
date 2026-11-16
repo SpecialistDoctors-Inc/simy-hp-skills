@@ -1,11 +1,11 @@
 """Operating-system boundary for the HP helpers: macOS/Linux and Windows.
 
-POSIX keeps descriptor-relative, no-follow file access (O_NOFOLLOW + dir_fd).
-Windows has neither, so it opens every path component with
-FILE_FLAG_OPEN_REPARSE_POINT, rejects reparse points (symlinks, junctions) from
-the opened handle itself, and keeps each directory handle open with read-only
-sharing so no checked component can be renamed, replaced or converted into a
-reparse point while used.
+Site files are always opened relative to a pinned parent directory, never by
+re-resolving a path: POSIX uses O_NOFOLLOW + dir_fd; Windows uses NtCreateFile
+relative to held directory handles with FILE_OPEN_REPARSE_POINT, rejects
+reparse points (symlinks, junctions) from each opened handle, creates the
+temporary file in the held directory and renames it by handle. Renaming or
+replacing a path component meanwhile cannot redirect a read or write outside.
 """
 from contextlib import contextmanager
 import errno
@@ -34,20 +34,47 @@ if WINDOWS:
                     ('nFileSizeLow', wintypes.DWORD), ('nNumberOfLinks', wintypes.DWORD),
                     ('nFileIndexHigh', wintypes.DWORD), ('nFileIndexLow', wintypes.DWORD)]
 
+    class _UnicodeString(ctypes.Structure):
+        _fields_ = [('Length', wintypes.USHORT), ('MaximumLength', wintypes.USHORT), ('Buffer', wintypes.LPWSTR)]
+
+    class _ObjectAttributes(ctypes.Structure):
+        _fields_ = [('Length', wintypes.ULONG), ('RootDirectory', wintypes.HANDLE),
+                    ('ObjectName', ctypes.POINTER(_UnicodeString)), ('Attributes', wintypes.ULONG),
+                    ('SecurityDescriptor', ctypes.c_void_p), ('SecurityQualityOfService', ctypes.c_void_p)]
+
+    class _IoStatusBlock(ctypes.Structure):
+        _fields_ = [('Status', ctypes.c_void_p), ('Information', ctypes.c_size_t)]
+
+    class _DispositionInfo(ctypes.Structure):
+        _fields_ = [('DeleteFile', ctypes.c_ubyte)]
+
     _kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
     _kernel32.CreateFileW.restype = wintypes.HANDLE
     _kernel32.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
                                       wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
     _kernel32.GetFileInformationByHandle.argtypes = (wintypes.HANDLE, ctypes.POINTER(_FileInformation))
+    _kernel32.SetFileInformationByHandle.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD)
     _kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    _ntdll = ctypes.WinDLL('ntdll')
+    _ntdll.NtCreateFile.restype = ctypes.c_long
+    _ntdll.NtCreateFile.argtypes = (ctypes.POINTER(wintypes.HANDLE), wintypes.DWORD, ctypes.POINTER(_ObjectAttributes),
+                                    ctypes.POINTER(_IoStatusBlock), ctypes.c_void_p, wintypes.ULONG, wintypes.ULONG,
+                                    wintypes.ULONG, wintypes.ULONG, ctypes.c_void_p, wintypes.ULONG)
+    _ntdll.RtlNtStatusToDosError.restype = wintypes.ULONG
+    _ntdll.RtlNtStatusToDosError.argtypes = (ctypes.c_long,)
     _INVALID_HANDLE = wintypes.HANDLE(-1).value
     _GENERIC_READ, _GENERIC_WRITE = 0x80000000, 0x40000000
-    # Share modes are enforced only against handles with data access; an
-    # attributes-only handle would not stop a rename or reparse conversion.
+    _FILE_GENERIC_READ, _FILE_GENERIC_WRITE, _DELETE, _SYNCHRONIZE = 0x120089, 0x120116, 0x10000, 0x100000
     _LIST_DIRECTORY = 0x1 | 0x80  # FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES
-    _SHARE_READ, _SHARE_ALL = 0x1, 0x1 | 0x2 | 0x4
+    _SHARE_ALL = 0x1 | 0x2 | 0x4
     _CREATE_NEW, _OPEN_EXISTING, _OPEN_ALWAYS = 1, 3, 4
     _BACKUP_SEMANTICS, _OPEN_REPARSE_POINT = 0x02000000, 0x00200000
+    # NtCreateFile dispositions and options.
+    _NT_OPEN, _NT_CREATE = 1, 2
+    _NT_DIRECTORY, _NT_NON_DIRECTORY, _NT_SYNCHRONOUS = 0x1, 0x40, 0x20
+    _NT_OPEN_REPARSE_POINT = 0x00200000
+    _OBJ_CASE_INSENSITIVE = 0x40
+    _FILE_RENAME_INFO, _FILE_DISPOSITION_INFO = 3, 4
 else:
     import fcntl
 
@@ -65,6 +92,21 @@ def is_link_path(path):
         return False
 
 
+def _win_checked(handle, name):
+    """Return the attributes of an opened handle; close it and raise for a reparse point."""
+    try:
+        info = _FileInformation()
+        if not _kernel32.GetFileInformationByHandle(handle, ctypes.byref(info)):
+            error = ctypes.get_last_error()
+            raise OSError(None, ctypes.FormatError(error), str(name), error)
+        if info.dwFileAttributes & _REPARSE_POINT:
+            raise OSError(errno.ELOOP, 'unsafe_link', str(name))
+    except BaseException:
+        _kernel32.CloseHandle(handle)
+        raise
+    return info.dwFileAttributes
+
+
 def _win_open(path, access, share, disposition):
     """CreateFileW on the name itself (never a reparse target); returns (handle, attributes)."""
     handle = _kernel32.CreateFileW(str(path), access, share, None, disposition,
@@ -72,17 +114,24 @@ def _win_open(path, access, share, disposition):
     if handle is None or handle == _INVALID_HANDLE:
         error = ctypes.get_last_error()
         raise OSError(None, ctypes.FormatError(error), str(path), error)
-    try:
-        info = _FileInformation()
-        if not _kernel32.GetFileInformationByHandle(handle, ctypes.byref(info)):
-            error = ctypes.get_last_error()
-            raise OSError(None, ctypes.FormatError(error), str(path), error)
-        if info.dwFileAttributes & _REPARSE_POINT:
-            raise OSError(errno.ELOOP, 'unsafe_link', str(path))
-    except BaseException:
-        _kernel32.CloseHandle(handle)
-        raise
-    return handle, info.dwFileAttributes
+    return handle, _win_checked(handle, path)
+
+
+def _nt_open(parent, name, access, share, disposition, options):
+    """Open name relative to the parent directory handle without following reparse points."""
+    encoded = name.encode('utf-16-le')
+    buffer = ctypes.create_unicode_buffer(name)
+    text = _UnicodeString(len(encoded), len(encoded) + 2, ctypes.cast(buffer, wintypes.LPWSTR))
+    attributes = _ObjectAttributes(ctypes.sizeof(_ObjectAttributes), parent, ctypes.pointer(text),
+                                   _OBJ_CASE_INSENSITIVE, None, None)
+    handle, status_block = wintypes.HANDLE(), _IoStatusBlock()
+    status = _ntdll.NtCreateFile(ctypes.byref(handle), access | _SYNCHRONIZE, ctypes.byref(attributes),
+                                 ctypes.byref(status_block), None, 0x80, share, disposition,
+                                 options | _NT_SYNCHRONOUS | _NT_OPEN_REPARSE_POINT, None, 0)
+    if status < 0:
+        error = _ntdll.RtlNtStatusToDosError(status)
+        raise OSError(None, ctypes.FormatError(error), name, error)
+    return handle.value, _win_checked(handle.value, name)
 
 
 def _win_descriptor(handle, flags):
@@ -91,6 +140,12 @@ def _win_descriptor(handle, flags):
     except BaseException:
         _kernel32.CloseHandle(handle)
         raise
+
+
+def _win_set_information(handle, information_class, value):
+    if not _kernel32.SetFileInformationByHandle(handle, information_class, ctypes.byref(value), ctypes.sizeof(value)):
+        error = ctypes.get_last_error()
+        raise OSError(None, ctypes.FormatError(error), None, error)
 
 
 def open_private(path, flags, mode=0o600):
@@ -148,21 +203,18 @@ def _parts(relative):
 
 @contextmanager
 def _directory(root, parts):
-    """Yield a pinned parent: a POSIX dir fd, or a Windows path whose components stay held."""
+    """Yield a pinned parent: a POSIX dir fd or a Windows directory handle."""
     if WINDOWS:
         handles = []
         try:
-            current = Path(root)
-            for part in [None] + parts:
-                if part is not None:
-                    current = current / part
-                # Read-only sharing: while held, nobody can rename, delete or open the
-                # checked directory for writing (e.g. FSCTL_SET_REPARSE_POINT into a junction).
-                handle, attributes = _win_open(current, _LIST_DIRECTORY, _SHARE_READ, _OPEN_EXISTING)
+            handle, attributes = _win_open(root, _LIST_DIRECTORY, _SHARE_ALL, _OPEN_EXISTING)
+            handles.append(handle)
+            if not attributes & _DIRECTORY:
+                raise NotADirectoryError(errno.ENOTDIR, 'unsafe_directory', str(root))
+            for part in parts:
+                handle, _ = _nt_open(handles[-1], part, _LIST_DIRECTORY, _SHARE_ALL, _NT_OPEN, _NT_DIRECTORY)
                 handles.append(handle)
-                if not attributes & _DIRECTORY:
-                    raise NotADirectoryError(errno.ENOTDIR, 'unsafe_directory', str(current))
-            yield current
+            yield handles[-1]
         finally:
             for handle in reversed(handles):
                 _kernel32.CloseHandle(handle)
@@ -182,7 +234,7 @@ def _directory(root, parts):
 
 def _read_in(directory, name, limit):
     if WINDOWS:
-        handle, attributes = _win_open(Path(directory) / name, _GENERIC_READ, _SHARE_ALL, _OPEN_EXISTING)
+        handle, attributes = _nt_open(directory, name, _FILE_GENERIC_READ, _SHARE_ALL, _NT_OPEN, 0)
         if attributes & _DIRECTORY:
             _kernel32.CloseHandle(handle)
             raise ValueError('not_regular_file')
@@ -200,9 +252,19 @@ def _read_in(directory, name, limit):
 
 
 def _commit(directory, temporary, name):
-    """Atomically move the written temporary file over name inside the pinned directory."""
+    """Atomically move the written temporary file over name inside the pinned directory.
+
+    temporary is a name (POSIX) or the open temporary file handle (Windows).
+    """
     if WINDOWS:
-        os.replace(Path(directory) / temporary, Path(directory) / name)
+        encoded = name.encode('utf-16-le')
+
+        class _RenameInfo(ctypes.Structure):
+            _fields_ = [('ReplaceIfExists', wintypes.DWORD), ('RootDirectory', wintypes.HANDLE),
+                        ('FileNameLength', wintypes.DWORD), ('FileName', wintypes.WCHAR * (len(encoded) // 2))]
+        info = _RenameInfo(1, directory, len(encoded))
+        ctypes.memmove(ctypes.addressof(info) + _RenameInfo.FileName.offset, encoded, len(encoded))
+        _win_set_information(temporary, _FILE_RENAME_INFO, info)
     else:
         os.rename(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)
 
@@ -229,25 +291,34 @@ def update_regular(root, relative, limit, decide):
         if data is None:
             return False
         temporary = '.hp-edit-' + uuid.uuid4().hex
+        if WINDOWS:
+            handle, _ = _nt_open(directory, temporary, _FILE_GENERIC_WRITE | _DELETE, 0, _NT_CREATE, _NT_NON_DIRECTORY)
+            output = _win_descriptor(handle, os.O_WRONLY | O_BINARY)
+            committed = False
+            try:
+                with os.fdopen(output, 'wb', closefd=False) as stream:
+                    stream.write(data); stream.flush(); os.fsync(stream.fileno())
+                _commit(directory, handle, parts[-1])
+                committed = True
+            finally:
+                if not committed:
+                    try:
+                        _win_set_information(handle, _FILE_DISPOSITION_INFO, _DispositionInfo(1))
+                    except OSError:
+                        pass
+                os.close(output)
+            return True
         created = False
         try:
-            if WINDOWS:
-                handle, _ = _win_open(Path(directory) / temporary, _GENERIC_WRITE, 0, _CREATE_NEW)
-                created = True
-                output = _win_descriptor(handle, os.O_WRONLY | O_BINARY)
-            else:
-                output = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=directory)
-                created = True
+            output = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=directory)
+            created = True
             with os.fdopen(output, 'wb') as stream:
                 stream.write(data); stream.flush(); os.fsync(stream.fileno())
             _commit(directory, temporary, parts[-1])
             created = False
         finally:
             if created:
-                if WINDOWS:
-                    os.unlink(Path(directory) / temporary)
-                else:
-                    os.unlink(temporary, dir_fd=directory)
+                os.unlink(temporary, dir_fd=directory)
         return True
 
 

@@ -94,33 +94,40 @@ class SiteFileTests(unittest.TestCase):
             hp_platform.replace_regular(self.root, 'junction/secret.txt', b'overwrite')
         self.assertEqual((self.outside / 'secret.txt').read_bytes(), b'private\n')
 
-    @unittest.skipUnless(hp_platform.WINDOWS, 'Windows handle sharing')
-    def test_held_windows_directory_cannot_be_reopened_for_writing_or_renamed(self):
-        attempts = []
+    @unittest.skipUnless(hp_platform.WINDOWS, 'junctions exist only on Windows')
+    def test_swapping_a_directory_for_a_junction_mid_update_never_writes_outside(self):
+        import _winapi
         def decide(current):
-            pages = self.root / 'pages'
-            try:
-                handle, _ = hp_platform._win_open(pages, hp_platform._GENERIC_WRITE, hp_platform._SHARE_ALL,
-                                                  hp_platform._OPEN_EXISTING)
-            except OSError:
-                attempts.append('write_open_refused')
-            else:
-                hp_platform._kernel32.CloseHandle(handle)
-            try:
-                pages.rename(self.root / 'moved')
-            except OSError:
-                attempts.append('rename_refused')
+            # Replace the checked parent with a junction to an outside folder.
+            (self.root / 'pages').rename(self.root / 'moved')
+            _winapi.CreateJunction(str(self.outside), str(self.root / 'pages'))
             return b'<h1>B</h1>\n'
         self.assertTrue(hp_platform.update_regular(self.root, 'pages/index.html', 100, decide))
-        self.assertEqual(attempts, ['write_open_refused', 'rename_refused'])
-        self.assertEqual((self.root / 'pages/index.html').read_bytes(), b'<h1>B</h1>\n')
+        self.assertEqual((self.root / 'moved/index.html').read_bytes(), b'<h1>B</h1>\n')
+        self.assertEqual(sorted(p.name for p in self.outside.iterdir()), ['secret.txt'])
+        self.assertEqual((self.outside / 'secret.txt').read_bytes(), b'private\n')
+
+    def test_failed_commit_removes_the_temporary_file(self):
+        real = hp_platform._commit
+        def fail(*args):
+            raise OSError('simulated disk failure')
+        hp_platform._commit = fail
+        try:
+            with self.assertRaises(OSError):
+                hp_platform.replace_regular(self.root, 'pages/index.html', b'new')
+        finally:
+            hp_platform._commit = real
         self.assertEqual(sorted(p.name for p in (self.root / 'pages').iterdir()), ['index.html'])
+        self.assertEqual((self.root / 'pages/index.html').read_bytes(), b'<h1>A</h1>\n')
 
 
 class ProcessTests(unittest.TestCase):
     def test_terminates_only_the_owned_live_child(self):
-        child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+        # Wait until the interpreter finished any launcher re-exec (macOS framework builds).
+        child = subprocess.Popen([sys.executable, '-c', 'import time; print("ready", flush=True); time.sleep(60)'],
+                                 stdout=subprocess.PIPE, text=True)
         try:
+            self.assertEqual(child.stdout.readline().strip(), 'ready')
             record = hp_platform.process_record(child.pid, ['sleeper'])
             self.assertEqual((record['pid'], record['ppid']), (child.pid, os.getpid()))
             self.assertTrue(record['started_at'])
@@ -131,6 +138,7 @@ class ProcessTests(unittest.TestCase):
         finally:
             if child.poll() is None:
                 child.terminate(); child.wait(timeout=10)
+            child.stdout.close()
 
     def test_changed_identity_is_not_signalled(self):
         child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
