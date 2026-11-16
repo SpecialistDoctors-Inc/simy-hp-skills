@@ -197,7 +197,7 @@ class PreviewTests(unittest.TestCase):
         self.card(); public = self.session.public()
         self.assertTrue(public['can_confirm']); self.assertEqual(public['confirmation']['binding']['source_commit'], 'c'*40)
         self.assertNotIn(self.hp.nonce, json.dumps(public))
-        self.assertNotIn(self.hp.nonce, (self.root/'.hp/control/journal.json').read_text())
+        self.assertNotIn(self.hp.nonce, (self.root/'.hp/control/journal.json').read_text(encoding='utf-8'))
         self.act('confirm'); self.assertEqual(self.session.public()['confirmation']['state'], 'tested')
         with self.assertRaises(Blocked): self.act('confirm')
         self.assertEqual(sum(name == 'hp_confirm_publish' for name,args in self.hp.calls), 1)

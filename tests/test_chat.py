@@ -26,7 +26,7 @@ class ChatTests(unittest.TestCase):
         uid=str(uuid.uuid4());self.chat.submit(uid,'見出しを変更してください');self.chat.worker.join(5);return uid
     def test_real_local_edit_and_same_request_dedup(self):
         uid=self.submit();self.chat.submit(uid,'見出しを変更してください')
-        self.assertEqual(self.runner.calls,1);self.assertIn('更新した見出し',(self.root/'site/index.html').read_text())
+        self.assertEqual(self.runner.calls,1);self.assertIn('更新した見出し',(self.root/'site/index.html').read_text(encoding='utf-8'))
         state=self.chat.public();self.assertEqual(state['requests'][-1]['status'],'completed');self.assertNotIn('candidate',state['requests'][-1])
         self.assertTrue(editor.status(self.root)['changes']);self.assertFalse((self.root/'.hp/pending').exists())
     def test_same_id_cannot_change_prompt(self):
@@ -36,7 +36,7 @@ class ChatTests(unittest.TestCase):
         self.runner.gate.clear();self.chat.submit(str(uuid.uuid4()),'変更して')
         (self.root/'site/index.html').write_text('<h1>Customer later edit</h1>')
         self.runner.gate.set();self.chat.worker.join(5)
-        self.assertEqual((self.root/'site/index.html').read_text(),'<h1>Customer later edit</h1>')
+        self.assertEqual((self.root/'site/index.html').read_text(encoding='utf-8'),'<h1>Customer later edit</h1>')
         self.assertEqual(self.chat.public()['requests'][-1]['status'],'conflict')
     def test_no_parallel_request_or_second_owner(self):
         self.runner.gate.clear();self.chat.submit(str(uuid.uuid4()),'変更して')
@@ -133,18 +133,18 @@ class ChatTests(unittest.TestCase):
     def test_partial_multifile_application_recovers_without_duplicate_model(self):
         (self.root/'site/style.css').write_text('body { color: black; }')
         self.runner.answer['edits'].append({'path':'style.css','old_text':'black','new_text':'navy'})
-        import os
-        real=os.rename;calls=0
+        import hp_platform
+        real=hp_platform._commit;calls=0
         def rename(*args,**kwargs):
             nonlocal calls
             calls+=1
             if calls==2:raise OSError('simulated disk failure')
             return real(*args,**kwargs)
-        with patch('hp_chat.os.rename',side_effect=rename):uid=self.submit()
+        with patch('hp_platform._commit',side_effect=rename):uid=self.submit()
         self.assertEqual(self.chat.public()['requests'][-1]['status'],'apply_pending')
-        self.assertIn('更新した見出し',(self.root/'site/index.html').read_text())
+        self.assertIn('更新した見出し',(self.root/'site/index.html').read_text(encoding='utf-8'))
         self.chat.submit(uid,'見出しを変更してください');self.chat.worker.join(5)
-        self.assertIn('navy',(self.root/'site/style.css').read_text());self.assertEqual(self.runner.calls,1)
+        self.assertIn('navy',(self.root/'site/style.css').read_text(encoding='utf-8'));self.assertEqual(self.runner.calls,1)
 
     def test_lock_contention_retries_without_model_reexecution(self):
         import hp_chat
@@ -305,12 +305,12 @@ class ChatTests(unittest.TestCase):
         (self.root / 'site/style.css').write_text('body { color: navy; }')
         self.chat.undo(request_id)
         self.assertEqual((self.root / 'site/index.html').read_bytes(), before)
-        self.assertEqual((self.root / 'site/style.css').read_text(), 'body { color: navy; }')
+        self.assertEqual((self.root / 'site/style.css').read_text(encoding='utf-8'), 'body { color: navy; }')
         self.assertEqual(self.chat.public()['requests'][-1]['undo_status'], 'completed')
         self.assertFalse(self.chat.public()['requests'][-1]['can_undo'])
         (self.root / 'site/index.html').write_text('<h1>Later edit</h1>')
         self.chat.undo(request_id)
-        self.assertEqual((self.root / 'site/index.html').read_text(), '<h1>Later edit</h1>')
+        self.assertEqual((self.root / 'site/index.html').read_text(encoding='utf-8'), '<h1>Later edit</h1>')
         self.assertEqual(self.runner.calls, 1)
 
     def test_conversation_undo_restores_exact_emphasis_breaks_and_whitespace(self):
@@ -324,7 +324,7 @@ class ChatTests(unittest.TestCase):
         uid = str(uuid.uuid4())
         self.chat.submit(uid, '以前の見出しに戻して'); self.chat.worker.join(5)
         self.assertEqual((self.root / 'site/index.html').read_bytes(), source)
-        self.assertEqual((self.root / 'site/style.css').read_text(), 'body { color: navy; }')
+        self.assertEqual((self.root / 'site/style.css').read_text(encoding='utf-8'), 'body { color: navy; }')
         self.assertEqual(self.chat.public()['requests'][-1]['status'], 'completed')
         self.assertEqual(self.chat.public()['requests'][-2]['undo_status'], 'completed')
         self.chat.submit(uid, '以前の見出しに戻して')
@@ -370,7 +370,7 @@ class ChatTests(unittest.TestCase):
         (self.root / 'site/index.html').write_text('<h1>Later edit</h1>')
         with self.assertRaisesRegex(ChatError, 'undo_conflict'):
             self.chat.undo(request_id)
-        self.assertEqual((self.root / 'site/index.html').read_text(), '<h1>Later edit</h1>')
+        self.assertEqual((self.root / 'site/index.html').read_text(encoding='utf-8'), '<h1>Later edit</h1>')
         self.assertIsNone(self.chat.public()['requests'][-1]['undo_status'])
 
     def test_undo_blocks_while_save_or_model_work_is_pending(self):
@@ -385,8 +385,8 @@ class ChatTests(unittest.TestCase):
         (self.root / 'site/style.css').write_text('body { color: black; }')
         self.runner.answer['edits'].append({'path': 'style.css', 'old_text': 'black', 'new_text': 'navy'})
         request_id = self.submit()
-        import os
-        rename = os.rename
+        import hp_platform
+        rename = hp_platform._commit
         count = 0
         def fail_second(*args, **kwargs):
             nonlocal count
@@ -394,7 +394,7 @@ class ChatTests(unittest.TestCase):
             if count == 2:
                 raise OSError('interrupted write')
             return rename(*args, **kwargs)
-        with patch('hp_chat.os.rename', side_effect=fail_second):
+        with patch('hp_platform._commit', side_effect=fail_second):
             self.chat.undo(request_id)
         self.assertEqual(self.chat.public()['requests'][-1]['undo_status'], 'pending')
         self.assertTrue(self.chat.has_pending_application())
@@ -405,7 +405,7 @@ class ChatTests(unittest.TestCase):
             self.chat.submit(str(uuid.uuid4()), '次の修正')
         self.chat.undo(request_id)
         self.assertEqual((self.root / 'site/index.html').read_bytes(), original_html)
-        self.assertEqual((self.root / 'site/style.css').read_text(), 'body { color: black; }')
+        self.assertEqual((self.root / 'site/style.css').read_text(encoding='utf-8'), 'body { color: black; }')
         self.assertEqual(self.chat.public()['requests'][-1]['undo_status'], 'completed')
         self.assertEqual(self.runner.calls, 1)
 
@@ -480,5 +480,5 @@ class ChatHTTPTests(unittest.TestCase):
                 self.assertEqual(undo_result['chat']['requests'][-1]['undo_status'], 'completed')
                 self.assertEqual(request('/api/undo', {'request_id': body['request_id']}, good)[0], 200)
                 self.assertEqual(hp.calls, [])
-                self.assertIn('Initial local page', (root/'site/index.html').read_text())
+                self.assertIn('Initial local page', (root/'site/index.html').read_text(encoding='utf-8'))
             finally:host.close();chat.close()

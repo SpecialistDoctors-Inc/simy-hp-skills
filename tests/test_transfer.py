@@ -39,7 +39,7 @@ class TransferTests(unittest.TestCase):
             self.assertEqual(client.calls[0], client.calls[1])
             self.assertEqual(result['operation_id'], packed['operation_id'])
             self.assertFalse(result['saved'])
-            self.assertEqual((root / 'site/index.html').read_text(), 'Later edit')
+            self.assertEqual((root / 'site/index.html').read_text(encoding='utf-8'), 'Later edit')
             self.assertNotIn('private', json.dumps(result))
 
     def test_transfers_reject_other_origins_redirects_and_extra_headers(self):

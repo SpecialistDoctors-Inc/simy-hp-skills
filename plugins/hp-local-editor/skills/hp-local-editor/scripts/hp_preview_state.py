@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 import uuid
 
 import hp_local_editor as editor
+import hp_platform
 
 ACTIVE = {'queued', 'running', 'retry_wait', 'reconciling', 'reporting'}
 
@@ -108,8 +109,8 @@ class Session:
             self.journal = {**self.journal, **changes}
             path = self.directory / 'journal.json'
             temporary = self.directory / ('journal-' + secrets.token_hex(8) + '.tmp')
-            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-            with os.fdopen(descriptor, 'w') as stream:
+            descriptor = hp_platform.open_private(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+            with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
                 json.dump(self.journal, stream, ensure_ascii=False, separators=(',', ':'))
                 stream.flush(); os.fsync(stream.fileno())
             os.replace(temporary, path)

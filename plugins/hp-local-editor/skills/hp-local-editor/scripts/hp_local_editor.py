@@ -2,7 +2,6 @@
 """Bounded static-site workspace transport. Python standard library only."""
 import argparse
 from contextlib import contextmanager
-import fcntl
 import difflib
 import hashlib
 import io
@@ -16,6 +15,8 @@ import tempfile
 import unicodedata
 import uuid
 import zipfile
+
+import hp_platform
 
 MAX_ZIP = 60 * 1024 * 1024
 MAX_TOTAL = 50 * 1024 * 1024
@@ -179,15 +180,16 @@ def snapshot(blob):
 
 
 def read_tree(root):
-    if root.is_symlink() or not root.is_dir():
+    if hp_platform.is_link_path(root) or not root.is_dir():
         fail('Missing or unsafe file tree')
     files = {}
     for directory, dirs, names in os.walk(root, followlinks=False):
         for name in dirs + names:
             path = Path(directory) / name
             rel = path.relative_to(root).as_posix()
-            mode = path.lstat().st_mode
-            if stat.S_ISLNK(mode) or not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
+            info = path.lstat()
+            mode = info.st_mode
+            if hp_platform.is_link_like(info) or not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
                 fail('Local symlink/special file rejected')
             safe_path(rel, directory=stat.S_ISDIR(mode))
             if stat.S_ISREG(mode):
@@ -217,13 +219,14 @@ def write_json(path, value):
 def load(workspace):
     root = Path(workspace)
     hp = root / '.hp'
-    if root.is_symlink() or hp.is_symlink() or not hp.is_dir():
+    if hp_platform.is_link_path(root) or hp_platform.is_link_path(hp) or not hp.is_dir():
         fail('Unsafe workspace metadata')
     # Metadata has no links or special files; never follow a substituted base.
     for directory, dirs, names in os.walk(hp, followlinks=False):
         for name in dirs + names:
-            mode = (Path(directory) / name).lstat().st_mode
-            if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
+            info = (Path(directory) / name).lstat()
+            mode = info.st_mode
+            if hp_platform.is_link_like(info) or not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
                 fail('Unsafe workspace metadata entry')
     state = parse_json((hp / 'state.json').read_bytes())
     keys(state, ('snapshot', 'accepted', 'base_directory'))
@@ -435,17 +438,17 @@ def workspace_lock(workspace, create_parent=False):
     if create_parent:
         root.parent.mkdir(parents=True, exist_ok=True)
     lock_path = root.parent.resolve() / ('.' + root.name + '.hp.lock')
-    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    descriptor = hp_platform.open_private(lock_path, os.O_CREAT | os.O_RDWR)
     try:
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             fail('Unsafe workspace lock')
         try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            hp_platform.lock_nonblocking(descriptor)
         except BlockingIOError:
             fail('Workspace is busy: another helper invocation owns its lock')
         yield
     finally:
-        os.close(descriptor)
+        hp_platform.close_lock(descriptor)
 
 
 def init(archive, workspace, receipt):

@@ -9,6 +9,10 @@ from hp_codex_client import desktop_codex, TransportError
 
 
 def main():
+    # Codex reads helper output as UTF-8; Windows consoles default to the ANSI code page.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8')
     command = sys.argv[1] if len(sys.argv) > 1 else '--help'
     if command == 'doctor':
         try:
