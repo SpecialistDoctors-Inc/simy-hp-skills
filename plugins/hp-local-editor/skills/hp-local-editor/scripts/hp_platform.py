@@ -65,6 +65,7 @@ if WINDOWS:
     _INVALID_HANDLE = wintypes.HANDLE(-1).value
     _GENERIC_READ, _GENERIC_WRITE = 0x80000000, 0x40000000
     _FILE_GENERIC_READ, _FILE_GENERIC_WRITE, _DELETE, _SYNCHRONIZE = 0x120089, 0x120116, 0x10000, 0x100000
+    _READ_ATTRIBUTES = 0x80  # needed by GetFileInformationByHandle on every checked handle
     _LIST_DIRECTORY = 0x1 | 0x80  # FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES
     _SHARE_ALL = 0x1 | 0x2 | 0x4
     _CREATE_NEW, _OPEN_EXISTING, _OPEN_ALWAYS = 1, 3, 4
@@ -125,7 +126,8 @@ def _nt_open(parent, name, access, share, disposition, options):
     attributes = _ObjectAttributes(ctypes.sizeof(_ObjectAttributes), parent, ctypes.pointer(text),
                                    _OBJ_CASE_INSENSITIVE, None, None)
     handle, status_block = wintypes.HANDLE(), _IoStatusBlock()
-    status = _ntdll.NtCreateFile(ctypes.byref(handle), access | _SYNCHRONIZE, ctypes.byref(attributes),
+    # Unlike CreateFileW, NtCreateFile adds no implicit FILE_READ_ATTRIBUTES | SYNCHRONIZE.
+    status = _ntdll.NtCreateFile(ctypes.byref(handle), access | _READ_ATTRIBUTES | _SYNCHRONIZE, ctypes.byref(attributes),
                                  ctypes.byref(status_block), None, 0x80, share, disposition,
                                  options | _NT_SYNCHRONOUS | _NT_OPEN_REPARSE_POINT, None, 0)
     if status < 0:
