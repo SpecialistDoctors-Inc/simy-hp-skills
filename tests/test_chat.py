@@ -133,14 +133,14 @@ class ChatTests(unittest.TestCase):
     def test_partial_multifile_application_recovers_without_duplicate_model(self):
         (self.root/'site/style.css').write_text('body { color: black; }')
         self.runner.answer['edits'].append({'path':'style.css','old_text':'black','new_text':'navy'})
-        import os
-        real=os.rename;calls=0
+        import hp_platform
+        real=hp_platform._commit;calls=0
         def rename(*args,**kwargs):
             nonlocal calls
             calls+=1
             if calls==2:raise OSError('simulated disk failure')
             return real(*args,**kwargs)
-        with patch('hp_chat.os.rename',side_effect=rename):uid=self.submit()
+        with patch('hp_platform._commit',side_effect=rename):uid=self.submit()
         self.assertEqual(self.chat.public()['requests'][-1]['status'],'apply_pending')
         self.assertIn('更新した見出し',(self.root/'site/index.html').read_text())
         self.chat.submit(uid,'見出しを変更してください');self.chat.worker.join(5)
@@ -385,8 +385,8 @@ class ChatTests(unittest.TestCase):
         (self.root / 'site/style.css').write_text('body { color: black; }')
         self.runner.answer['edits'].append({'path': 'style.css', 'old_text': 'black', 'new_text': 'navy'})
         request_id = self.submit()
-        import os
-        rename = os.rename
+        import hp_platform
+        rename = hp_platform._commit
         count = 0
         def fail_second(*args, **kwargs):
             nonlocal count
@@ -394,7 +394,7 @@ class ChatTests(unittest.TestCase):
             if count == 2:
                 raise OSError('interrupted write')
             return rename(*args, **kwargs)
-        with patch('hp_chat.os.rename', side_effect=fail_second):
+        with patch('hp_platform._commit', side_effect=fail_second):
             self.chat.undo(request_id)
         self.assertEqual(self.chat.public()['requests'][-1]['undo_status'], 'pending')
         self.assertTrue(self.chat.has_pending_application())

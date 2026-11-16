@@ -7,6 +7,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tests'))
+sys.path.insert(0, str(ROOT / 'plugins/hp-local-editor/skills/hp-local-editor/scripts'))
+import hp_platform  # noqa: E402
 from test_local_editor import EditorTests
 
 
@@ -19,8 +21,8 @@ def main(binary):
         environment = {**os.environ, 'PATH': str(empty), 'PYTHONHOME': '/missing', 'PYTHONPATH': '/missing'}
         def call(*args):
             command = [str(Path(binary).resolve()), *map(str, args)]
-            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=environment)
-            identity = subprocess.run(['/bin/ps', '-p', str(process.pid), '-o', 'pid=,ppid=,lstart=,command='], capture_output=True, text=True).stdout.strip()
+            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', env=environment)
+            identity = hp_platform.process_identity(process.pid)
             records.append({'pid': process.pid, 'ppid': os.getpid(), 'command': command, 'identity': identity})
             stdout, stderr = process.communicate()
             if process.returncode: raise RuntimeError(stderr)

@@ -3,11 +3,13 @@ import json
 import os
 from pathlib import Path
 import queue
+import re
 import shutil
-import signal
 import subprocess
 import threading
 import time
+
+import hp_platform
 
 TOOLS = {'hp_save_draft', 'hp_profile', 'hp_list_sites', 'hp_submit_preview', 'hp_get_operation',
          'hp_prepare_publish', 'hp_confirm_publish', 'hp_get_confirmation',
@@ -19,13 +21,47 @@ class TransportError(RuntimeError):
     pass
 
 
-def desktop_codex(executable=None, app_roots=None):
+def _version_key(path):
+    # WindowsApps package folders are OpenAI.Codex_<version>_<arch>__<publisher>.
+    match = re.match(r'[^_]+_([0-9.]+)_', path.parents[2].name)
+    return tuple(int(part) for part in match.group(1).split('.')) if match else ()
+
+
+def windows_codex_candidates(environment=None):
+    """Bundled codex.exe locations reported for the Windows desktop app.
+
+    The Microsoft Store package keeps it under WindowsApps; some versions also
+    stage a copy under %LOCALAPPDATA%. Both need real-host acceptance per release.
+    """
+    environment = os.environ if environment is None else environment
+    candidates = []
+    local = environment.get('LOCALAPPDATA')
+    if local:
+        candidates.append(Path(local) / 'OpenAI' / 'Codex' / 'bin' / 'codex.exe')
+    store = Path(environment.get('ProgramW6432') or environment.get('ProgramFiles') or r'C:\Program Files') / 'WindowsApps'
+    try:
+        packaged = [package / 'app' / 'resources' / 'codex.exe' for package in store.glob('OpenAI.Codex_*')]
+    except OSError:
+        packaged = []  # Listing WindowsApps is often denied; the LOCALAPPDATA copy remains.
+    candidates.extend(sorted(packaged, key=_version_key, reverse=True))
+    return candidates
+
+
+def desktop_codex(executable=None, app_roots=None, windows=None, environment=None):
     """Use the already-installed desktop app; never install a second CLI."""
     if executable:
         resolved = shutil.which(str(executable))
         if resolved:
             return resolved
         raise TransportError('codex_executable_unavailable')
+    if hp_platform.WINDOWS if windows is None else windows:
+        for candidate in windows_codex_candidates(environment):
+            try:
+                if candidate.is_file():
+                    return str(candidate)
+            except OSError:
+                continue
+        raise TransportError('codex_desktop_runtime_unavailable')
     roots = app_roots if app_roots is not None else (
         Path('/Applications'), Path.home() / 'Applications')
     for root in roots:
@@ -42,6 +78,8 @@ def desktop_codex(executable=None, app_roots=None):
 
 def desktop_environment(environment=None):
     result = dict(os.environ if environment is None else environment)
+    if hp_platform.WINDOWS:
+        return result
     paths = [part for part in result.get('PATH', '').split(os.pathsep) if part]
     # The desktop runtime itself uses OS utilities. These directories are part
     # of macOS/Linux, not a separately installed customer CLI or Python runtime.
@@ -70,17 +108,16 @@ class CodexClient:
     def __init__(self, directory, executable=None):
         executable = desktop_codex(executable)
         self.directory = Path(directory)
-        self.process = subprocess.Popen([executable, 'app-server', '--listen', 'stdio://'],
+        command = [executable, 'app-server', '--listen', 'stdio://']
+        # JSON-RPC is UTF-8 on every OS, never the Windows ANSI code page.
+        self.process = subprocess.Popen(command,
             cwd=directory, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, text=True, bufsize=1, env=desktop_environment())
-        self.identity = subprocess.check_output(['/bin/ps', '-p', str(self.process.pid),
-            '-o', 'pid=,ppid=,lstart=,command='], text=True).strip()
-        record = {'pid': self.process.pid, 'ppid': int(subprocess.check_output(['/bin/ps', '-p', str(self.process.pid), '-o', 'ppid='], text=True)),
-            'started_at': subprocess.check_output(['/bin/ps', '-p', str(self.process.pid), '-o', 'lstart='], text=True).strip(),
-            'command': [executable, 'app-server', '--listen', 'stdio://'], 'identity': self.identity}
+            stderr=subprocess.DEVNULL, text=True, encoding='utf-8', bufsize=1, env=desktop_environment())
+        record = hp_platform.process_record(self.process.pid, command)
+        self.identity = record['identity']
         path = self.directory / 'codex-process.json'
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-        with os.fdopen(descriptor, 'w') as stream:
+        descriptor = hp_platform.open_private(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+        with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
             json.dump(record, stream)
         self.responses, self.lock, self.sequence = queue.Queue(), threading.Lock(), 0
         self.write_lock = threading.Lock()
@@ -194,14 +231,10 @@ class CodexClient:
             self.process.stdin.close()
             self.process.wait(timeout=5)
         except (OSError, subprocess.TimeoutExpired):
-            if self.process.poll() is not None:
-                return
-            current = subprocess.run(['/bin/ps', '-p', str(self.process.pid), '-o',
-                'pid=,ppid=,lstart=,command='], capture_output=True, text=True)
-            if current.returncode == 0 and current.stdout.strip() == self.identity:
-                os.kill(self.process.pid, signal.SIGTERM)
-                self.process.wait(timeout=5)
-            else:
+            try:
+                if hp_platform.terminate_owned(self.process, self.identity):
+                    self.process.wait(timeout=5)
+            except ProcessLookupError:
                 raise TransportError('owned_codex_identity_changed') from None
 
 

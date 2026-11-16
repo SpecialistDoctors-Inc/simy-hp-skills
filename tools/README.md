@@ -5,6 +5,12 @@ Customers install the platform package, not the GitHub source archive. The nativ
 installed Codex runtime; no second CLI is installed. Current real-host validation
 targets macOS Apple Silicon. Other platforms need their own build and acceptance.
 
+Windows x64 builds `bin/hp.exe` on a Windows host (CI `windows-latest` uploads the
+unsigned ZIP as a workflow artifact). Before customer distribution it still needs
+Authenticode signing, a real Windows machine with the Microsoft Store Codex app
+(`hp doctor` must find its bundled `codex.exe`), and the full local → dev →
+production flow. The build lock is universal (`uv pip compile --universal`).
+
 Build in an isolated environment with `requirements-build.lock` and Python 3.13:
 
 ```sh

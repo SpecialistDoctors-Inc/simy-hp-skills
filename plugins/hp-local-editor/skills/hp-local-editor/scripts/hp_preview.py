@@ -2,15 +2,12 @@
 """Loopback-only preview/chat shell with separate explicit delivery controls."""
 import argparse
 import webbrowser
-import fcntl
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import mimetypes
 import os
 from pathlib import Path
 import secrets
-import stat
-import subprocess
 import sys
 import threading
 from urllib.parse import unquote, urlsplit
@@ -19,6 +16,7 @@ from hp_codex_client import LazyCodexClient
 from hp_preview_state import Session, Blocked
 from hp_chat import Chat, ChatError
 import hp_local_editor as editor
+import hp_platform
 
 ASSETS = ((Path(sys._MEIPASS) / 'assets/preview') if getattr(sys, 'frozen', False)
           else Path(__file__).resolve().parents[3] / 'assets/preview')
@@ -29,24 +27,10 @@ def site_bytes(root, relative):
     if relative.endswith('/'):
         relative += 'index.html'
     editor.safe_path(relative)
-    descriptors = []
-    try:
-        current = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        descriptors.append(current)
-        parts = relative.split('/')
-        for part in parts[:-1]:
-            current = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=current)
-            descriptors.append(current)
-        file = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=current)
-        descriptors.append(file)
-        info = os.fstat(file)
-        if not stat.S_ISREG(info.st_mode) or info.st_size > editor.MAX_FILE:
-            raise ValueError('unsafe_site_file')
-        with os.fdopen(os.dup(file), 'rb') as stream:
-            return stream.read(editor.MAX_FILE + 1)
-    finally:
-        for descriptor in reversed(descriptors):
-            os.close(descriptor)
+    data = hp_platform.read_regular(root, relative, editor.MAX_FILE)
+    if len(data) > editor.MAX_FILE:
+        raise ValueError('unsafe_site_file')
+    return data
 
 
 class PreviewHost:
@@ -94,10 +78,10 @@ class PreviewHost:
                 if parsed.query: return host.reply(self, 404, {'error': 'not_found'})
                 try:
                     if parsed.path == '/':
-                        html = (ASSETS / 'index.html').read_text().replace('CSRF_VALUE', host.csrf).replace('SITE_URL', host.site_url)
+                        html = (ASSETS / 'index.html').read_text(encoding='utf-8').replace('CSRF_VALUE', host.csrf).replace('SITE_URL', host.site_url)
                         return host.reply(self, 200, html, 'text/html; charset=utf-8')
                     if parsed.path == '/control.js':
-                        return host.reply(self, 200, (ASSETS / 'control.js').read_text(), 'text/javascript; charset=utf-8')
+                        return host.reply(self, 200, (ASSETS / 'control.js').read_text(encoding='utf-8'), 'text/javascript; charset=utf-8')
                     if parsed.path == '/api/state': return host.reply(self, 200, host.public())
                     if parsed.path == '/api/revision': return host.reply(self, 200, {'revision': session.revision()})
                     host.reply(self, 404, {'error': 'not_found'})
@@ -179,10 +163,11 @@ def main():
     parser.add_argument('--no-open', action='store_true', help='Keep the browser closed for automated checks')
     args = parser.parse_args()
     session = Session(args.workspace, None)
-    descriptor = os.open(session.directory / 'launcher.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    descriptor = hp_platform.open_private(session.directory / 'launcher.lock', os.O_RDWR | os.O_CREAT)
     try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        hp_platform.lock_nonblocking(descriptor)
     except BlockingIOError:
+        os.close(descriptor)
         parser.exit(2, 'Local preview already owns this workspace lock; leave it intact.\n')
     client = None; host = None; chat = None
     try:
@@ -190,8 +175,7 @@ def main():
         chat = Chat(session.root)
         host = PreviewHost(session, chat)
         origin = host.start()
-        identity = subprocess.check_output(['/bin/ps', '-p', str(os.getpid()),
-            '-o', 'pid=,ppid=,lstart=,command='], text=True).strip()
+        identity = hp_platform.process_identity(os.getpid())
         editor.write_json(session.directory / 'launcher.json', {
             'pid': os.getpid(), 'ppid': os.getppid(), 'identity': identity,
             'origin': origin, 'workspace': str(session.root),
@@ -211,7 +195,7 @@ def main():
         if host: host.close()
         if chat: chat.close()
         if client: client.close()
-        os.close(descriptor)
+        hp_platform.close_lock(descriptor)
 
 
 if __name__ == '__main__': main()

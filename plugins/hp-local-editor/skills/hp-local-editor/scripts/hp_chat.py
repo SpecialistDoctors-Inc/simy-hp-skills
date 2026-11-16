@@ -7,21 +7,19 @@ silently start a second model turn or overwrite a newer local edit.
 from collections import Counter
 from difflib import SequenceMatcher
 import base64
-import fcntl
 import hashlib
 from html.parser import HTMLParser
 import json
 import os
 from pathlib import Path
 import re
-import signal
-import stat
 import subprocess
 import threading
 import time
 import uuid
 
 import hp_local_editor as editor
+import hp_platform
 from hp_codex_client import desktop_codex, desktop_environment
 from hp_preview_state import DefiniteRejection
 
@@ -61,9 +59,9 @@ def need(ok, code):
 def atomic_json(path, value):
     need(not path.is_symlink(), 'unsafe_chat_metadata')
     temp = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
-    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    fd = hp_platform.open_private(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
     try:
-        with os.fdopen(fd, 'w') as f:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
             json.dump(value, f, ensure_ascii=False); f.flush(); os.fsync(f.fileno())
         os.replace(temp, path)
     finally:
@@ -94,25 +92,28 @@ class CodexEditor:
         env = desktop_environment()
         for key in ('OPENAI_API_KEY','CODEX_API_KEY','OPENAI_BASE_URL'):
             env.pop(key, None)
-        with os.fdopen(os.open(folder/'events.jsonl',os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600),'w') as events, os.fdopen(os.open(folder/'stderr.log',os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600),'w') as errors:
+        # Child output goes straight to binary files; the prompt is UTF-8 on every OS.
+        with os.fdopen(hp_platform.open_private(folder/'events.jsonl',os.O_WRONLY|os.O_CREAT|os.O_EXCL),'wb') as events, os.fdopen(hp_platform.open_private(folder/'stderr.log',os.O_WRONLY|os.O_CREAT|os.O_EXCL),'wb') as errors:
             process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=events, stderr=errors,
-                text=True, cwd=folder, env=env)
-            identity = subprocess.check_output(['/bin/ps','-p',str(process.pid),'-o','pid=,ppid=,lstart=,command='],text=True).strip()
-            atomic_json(folder/'process.json', {'pid':process.pid,'ppid':os.getpid(),'command':command,'identity':identity})
+                text=True, encoding='utf-8', cwd=folder, env=env)
+            record = hp_platform.process_record(process.pid, command)
+            identity = record['identity']
+            atomic_json(folder/'process.json', {k:record[k] for k in ('pid','ppid','command','identity')})
             try:
                 process.communicate(prompt, timeout=180)
             except subprocess.TimeoutExpired:
-                current = subprocess.run(['/bin/ps','-p',str(process.pid),'-o','pid=,ppid=,lstart=,command='],capture_output=True,text=True)
-                if process.poll() is None and current.returncode == 0 and current.stdout.strip() == identity:
-                    process.send_signal(signal.SIGTERM)
-                    try:process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:pass
+                try:
+                    if hp_platform.terminate_owned(process, identity):
+                        try:process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:pass
+                except ProcessLookupError:
+                    pass
                 raise ChatError('edit_response_unknown') from None
         if process.returncode != 0 or not output.is_file():
             messages = []
             event_path = folder / 'events.jsonl'
             if event_path.is_file() and event_path.stat().st_size < 1024 * 1024:
-                for line in event_path.read_text().splitlines():
+                for line in event_path.read_text(encoding='utf-8', errors='replace').splitlines():
                     try:
                         event = json.loads(line)
                     except ValueError:
@@ -283,33 +284,24 @@ def apply_candidate(workspace, candidate):
             need(current.get(path) in (before,after), 'local_edit_conflict')
             parsed[path]=(before,after)
         for path,(before,after) in parsed.items():
-            dirs=[];temp=None
-            try:
-                fd=os.open(Path(workspace)/'site',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW);dirs.append(fd)
-                parts=path.split('/')
-                for part in parts[:-1]:
-                    fd=os.open(part,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=fd);dirs.append(fd)
-                source=os.open(parts[-1],os.O_RDONLY|os.O_NOFOLLOW,dir_fd=fd)
-                with os.fdopen(source,'rb') as stream:
-                    need(stat.S_ISREG(os.fstat(stream.fileno()).st_mode), 'edit_path_rejected')
-                    data=stream.read(editor.MAX_FILE+1)
+            def decide(data,before=before,after=after):
                 need(data in (before,after), 'local_edit_conflict')
-                if data==after:continue
-                temp='.hp-edit-'+uuid.uuid4().hex
-                output=os.open(temp,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o644,dir_fd=fd)
-                with os.fdopen(output,'wb') as stream:stream.write(after);stream.flush();os.fsync(stream.fileno())
-                os.rename(temp,parts[-1],src_dir_fd=fd,dst_dir_fd=fd);temp=None
-            finally:
-                if temp:os.unlink(temp,dir_fd=fd)
-                for fd in reversed(dirs):os.close(fd)
+                return None if data==after else after
+            # Content check and replacement share one pinned parent directory.
+            try:
+                hp_platform.update_regular(Path(workspace)/'site',path,editor.MAX_FILE,decide)
+            except ChatError:
+                raise
+            except ValueError:
+                raise ChatError('edit_path_rejected') from None
 
 
 class Chat:
     def __init__(self, workspace, runner=None):
         self.root=Path(workspace).resolve();editor.load(self.root)
         self.directory=self.root/'.hp/chat';self.directory.mkdir(mode=0o700,exist_ok=True)
-        self.fd=os.open(self.directory/'owner.lock',os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600)
-        try:fcntl.flock(self.fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        self.fd=hp_platform.open_private(self.directory/'owner.lock',os.O_CREAT|os.O_RDWR)
+        try:hp_platform.lock_nonblocking(self.fd)
         except BlockingIOError:
             os.close(self.fd);raise ChatError('chat_already_open') from None
         self.lock=threading.RLock();self.worker=None;self.runner=runner or CodexEditor(self.directory)
@@ -490,7 +482,7 @@ class Chat:
         # Do not release ownership while an owned editing worker can still apply.
         if self.worker:self.worker.join()
         with self.lock:
-            os.close(self.fd)
+            hp_platform.close_lock(self.fd)
 
     def prepare_preview(self, session, revision):
         """Explicit quick reply: save exact local candidate, then request dev."""

@@ -96,9 +96,11 @@ class DesktopRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(TransportError, 'hp_connection_unavailable'):
             select_hp_server([{**valid, 'runtimeStatus': 'authenticationRequired'}])
 
+    @unittest.skipIf(os.name == 'nt', 'Windows keeps the desktop environment unchanged')
     def test_empty_path_uses_os_utilities_without_adding_separate_cli_install(self):
         self.assertEqual(desktop_environment({'PATH': '', 'KEEP': 'value'}),
             {'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'KEEP': 'value'})
+    @unittest.skipIf(os.name == 'nt', 'macOS application bundles')
     def test_finds_bundled_desktop_without_path_cli(self):
         with tempfile.TemporaryDirectory() as directory:
             binary = Path(directory) / 'ChatGPT.app/Contents/Resources/codex-cli/bin/codex'
@@ -107,6 +109,7 @@ class DesktopRuntimeTests(unittest.TestCase):
             binary.chmod(0o700)
             self.assertEqual(desktop_codex(app_roots=[Path(directory)]), str(binary.resolve()))
 
+    @unittest.skipIf(os.name == 'nt', 'macOS application bundles')
     def test_missing_desktop_does_not_fall_back_to_unrelated_path_command(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(TransportError, 'codex_desktop_runtime_unavailable'):

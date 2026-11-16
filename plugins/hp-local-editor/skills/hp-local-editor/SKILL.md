@@ -5,8 +5,11 @@ description: Help a non-engineer edit a managed homepage by conversation. Prepar
 
 # Local homepage editing
 
-Use the native distribution’s `bin/hp` from the installed plugin root. It includes
-the runtime for its labelled OS/architecture. Windows is not supported.
+Use the native distribution’s `bin/hp` from the installed plugin root (`bin\hp.exe`
+in a Windows package; `bin/hp` below means whichever one is shipped). It includes
+the runtime for its labelled OS/architecture. A Windows package is supported only
+after its own real-host acceptance; until the listing says so, treat Windows as
+unsupported for customers.
 The source archive alone is a developer package, not the customer installer.
 If `bin/hp` is missing or incompatible, report an incomplete installation to the
 operator; do not ask the customer to install Python, Node, Git or a separate CLI.
