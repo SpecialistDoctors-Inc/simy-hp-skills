@@ -266,8 +266,8 @@ def _commit(directory, temporary, name):
         class _RenameInfo(ctypes.Structure):
             _fields_ = [('ReplaceIfExists', wintypes.DWORD), ('RootDirectory', wintypes.HANDLE),
                         ('FileNameLength', wintypes.DWORD), ('FileName', wintypes.WCHAR * (len(encoded) // 2 + 4))]
-        # A simple name with no RootDirectory renames within the file's own (held) directory.
-        info = _RenameInfo(1, None, len(encoded))
+        # The name is resolved relative to the held directory handle, never a path.
+        info = _RenameInfo(1, directory, len(encoded))
         ctypes.memmove(ctypes.addressof(info) + _RenameInfo.FileName.offset, encoded, len(encoded))
         _win_set_information(temporary, _FILE_RENAME_INFO, info)
     else:
