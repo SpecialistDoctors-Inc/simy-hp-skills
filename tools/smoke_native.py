@@ -38,7 +38,7 @@ def main(binary):
         call('accept', fixture.workspace, receipt)
         current = call('status', fixture.workspace)
         assert not current['pending'] and len(current['changes']) == 1
-        assert 'Later local edit' in (fixture.workspace / 'site/index.html').read_text()
+        assert 'Later local edit' in (fixture.workspace / 'site/index.html').read_text(encoding='utf-8')
         print(json.dumps({'native_init_pack_accept': True, 'pending_retry_same_bytes': True,
                           'later_local_edits_preserved': True, 'empty_PATH': True,
                           'processes': records}))

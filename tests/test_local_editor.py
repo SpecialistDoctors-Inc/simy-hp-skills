@@ -59,11 +59,11 @@ class EditorTests(unittest.TestCase):
                     e.init(self.archive, self.root / 'new-parent' / 'workspace', self.open_receipt)
                 self.assertEqual({p.relative_to(self.root).as_posix() for p in self.root.rglob('*')}, before)
                 self.assertEqual(self.archive.read_bytes(), blob)
-                self.assertEqual(json.loads(self.open_receipt.read_text()), receipt)
+                self.assertEqual(json.loads(self.open_receipt.read_text(encoding='utf-8')), receipt)
         self.archive.write_bytes(original)
         self.open_receipt.write_text(json.dumps(self.open_result))
         self.init()
-        self.assertEqual(json.loads((self.workspace / '.hp/open-receipt.json').read_text()), self.open_result)
+        self.assertEqual(json.loads((self.workspace / '.hp/open-receipt.json').read_text(encoding='utf-8')), self.open_result)
 
     def test_init_requires_receipt_and_preserves_existing_workspace(self):
         result = subprocess.run([sys.executable, str(SCRIPT), 'init', str(self.archive), str(self.workspace)], capture_output=True, text=True)
@@ -74,7 +74,7 @@ class EditorTests(unittest.TestCase):
         (site / 'index.html').write_text('keep local edits')
         with self.assertRaisesRegex(ValueError, 'must not exist'):
             e.init(self.archive, self.workspace, self.open_receipt)
-        self.assertEqual((site / 'index.html').read_text(), 'keep local edits')
+        self.assertEqual((site / 'index.html').read_text(encoding='utf-8'), 'keep local edits')
 
     def test_diff_noop_and_explicit_deletion(self):
         site = self.init()
@@ -109,7 +109,7 @@ class EditorTests(unittest.TestCase):
         receipt = self.receipt(first)
         self.assertFalse(e.accept(self.workspace, receipt)['already_accepted'])
         self.assertTrue(e.accept(self.workspace, receipt)['already_accepted'])
-        self.assertEqual((site / 'index.html').read_text(), 'second\n')
+        self.assertEqual((site / 'index.html').read_text(encoding='utf-8'), 'second\n')
         status = e.status(self.workspace, True)
         self.assertIn('-first', status['diff'])
         self.assertIn('+second', status['diff'])
@@ -143,7 +143,7 @@ class EditorTests(unittest.TestCase):
         (site / 'index.html').write_text('saved')
         packed = e.pack(self.workspace, self.bundle)
         path = self.receipt(packed)
-        original = json.loads(path.read_text())
+        original = json.loads(path.read_text(encoding='utf-8'))
         for key, value in [('site_id', 'another-site'), ('workspace_id', str(uuid.uuid4())), ('operation_id', str(uuid.uuid4())), ('base_commit', 'c' * 40)]:
             with self.subTest(key=key):
                 path.write_text(json.dumps(dict(original, **{key: value})))
@@ -185,7 +185,7 @@ class EditorTests(unittest.TestCase):
         (site / 'index.html').write_text('saved')
         packed = e.pack(self.workspace, self.bundle)
         receipt = self.receipt(packed)
-        value = json.loads(receipt.read_text())
+        value = json.loads(receipt.read_text(encoding='utf-8'))
         value['bundle_sha256'] = '0' * 64
         receipt.write_text(json.dumps(value))
         with self.assertRaises(ValueError):

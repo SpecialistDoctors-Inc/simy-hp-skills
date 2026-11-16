@@ -41,7 +41,10 @@ if WINDOWS:
     _kernel32.GetFileInformationByHandle.argtypes = (wintypes.HANDLE, ctypes.POINTER(_FileInformation))
     _kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
     _INVALID_HANDLE = wintypes.HANDLE(-1).value
-    _GENERIC_READ, _GENERIC_WRITE, _READ_ATTRIBUTES = 0x80000000, 0x40000000, 0x80
+    _GENERIC_READ, _GENERIC_WRITE = 0x80000000, 0x40000000
+    # Share modes are enforced only against handles with data access; an
+    # attributes-only handle would not stop a rename or reparse conversion.
+    _LIST_DIRECTORY = 0x1 | 0x80  # FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES
     _SHARE_READ, _SHARE_ALL = 0x1, 0x1 | 0x2 | 0x4
     _CREATE_NEW, _OPEN_EXISTING, _OPEN_ALWAYS = 1, 3, 4
     _BACKUP_SEMANTICS, _OPEN_REPARSE_POINT = 0x02000000, 0x00200000
@@ -155,7 +158,7 @@ def _directory(root, parts):
                     current = current / part
                 # Read-only sharing: while held, nobody can rename, delete or open the
                 # checked directory for writing (e.g. FSCTL_SET_REPARSE_POINT into a junction).
-                handle, attributes = _win_open(current, _READ_ATTRIBUTES, _SHARE_READ, _OPEN_EXISTING)
+                handle, attributes = _win_open(current, _LIST_DIRECTORY, _SHARE_READ, _OPEN_EXISTING)
                 handles.append(handle)
                 if not attributes & _DIRECTORY:
                     raise NotADirectoryError(errno.ENOTDIR, 'unsafe_directory', str(current))
