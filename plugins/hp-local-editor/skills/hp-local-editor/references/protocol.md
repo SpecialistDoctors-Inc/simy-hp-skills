@@ -2,7 +2,7 @@
 
 The customer edits ordinary files locally. Only the server accesses GitHub. The
 operator identity, repo, branches, Drive roots, recipient and deployment targets
-come from server-owned config. Actors are validated Google subjects, never inputs.
+come from server-owned config. Actors are validated account subjects (Google or a verified mailbox), never inputs.
 
 ## Snapshot
 

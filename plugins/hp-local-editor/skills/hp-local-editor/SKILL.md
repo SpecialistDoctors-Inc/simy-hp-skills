@@ -27,7 +27,7 @@ integrating a service or diagnosing rejected packages.
 
 For onboarding, ZIP installation, or explaining the current UI, read
 [the Japanese customer guide](references/customer-guide.md). Guide the customer
-through the installed desktop app and existing Google connection. The local
+through the installed desktop app and existing HP login (an emailed six-digit code, or Google). The local
 browser chat is the primary editing surface after startup.
 
 ## Plugin setup
@@ -40,11 +40,11 @@ requested editing start. `doctor` proves runtime availability only.
 Check the current version and loaded plugin capabilities first. Continue when
 the installed version is available in the host. Request restart only when the new
 files remain unloaded and supported reload mechanisms cannot resolve it.
-When the host requires a restart or the user's Google login, report the exact
+When the host requires a restart or the user's HP login, report the exact
 remaining user action and ask them to return to the same conversation with
 “続けて”. Continue the original request when they return. If the host opens a new
 setup conversation, use the user's current editing-start request there. Do not
-present a runtime check as successful Google connection or an opened editor.
+present a runtime check as a successful HP login or an opened editor.
 
 For a connection or editing-start request, run the bundled `bin/hp doctor`, then discover the plugin's
 HP control tools. The configured endpoint is `https://hp-control.simy.one/mcp`.
@@ -52,8 +52,10 @@ Installing this package is not evidence of a working connection. Add only the
 requested plugin settings, preserving existing configuration; do not invent an
 app registration or claim OAuth setup succeeded. The host must discover
 protected-resource/OAuth metadata, complete
-Google login in the user's own UI, and verify `hp_profile` plus `hp_list_sites`.
-The server selects the validated Google subject and site roles; never supply a
+the HP login in the user's own browser (registered email address plus the emailed
+six-digit code, or Google; the user types the code there, never in chat), and verify
+`hp_profile` plus `hp_list_sites`.
+The server selects the validated account subject and site roles; never supply a
 subject or repository as a tool argument.
 
 Use HP’s authenticated `hp_download_workspace` / `hp_prepare_upload` through the
