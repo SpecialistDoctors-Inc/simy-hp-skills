@@ -9,7 +9,7 @@
       "interface": {
         "displayName": "HP ローカル編集",
         "shortDescription": "右下のチャットでホームページを編集",
-        "longDescription": "管理対象の静的ホームページを、Codexとの会話で編集するプラグインです。手元の表示を確認してから確認用サイト（dev）へ進み、さらに確認した内容だけを本人の操作で本番公開します。対象サイトとGoogleアカウントは運用担当による事前設定が必要です。利用者のGitHubアカウント・Git・別のCodex CLI・Pythonの追加導入は不要です。現在の配布対象はMacのApple Silicon搭載機です。WindowsとIntel Macは未対応です。一般の任意のホームページや医療記録を扱うサービスではありません。",
+        "longDescription": "管理対象の静的ホームページを、Codexとの会話で編集するプラグインです。手元の表示を確認してから確認用サイト（dev）へ進み、さらに確認した内容だけを本人の操作で本番公開します。対象サイトとログイン用のメールアドレス（またはGoogleアカウント）は運用担当による事前設定が必要です。利用者のGitHubアカウント・Git・別のCodex CLI・Pythonの追加導入は不要です。現在の配布対象はMacのApple Silicon搭載機です。WindowsとIntel Macは未対応です。一般の任意のホームページや医療記録を扱うサービスではありません。",
         "category": "Productivity",
         "capabilities": [
           "Read",
