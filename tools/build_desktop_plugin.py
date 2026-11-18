@@ -51,7 +51,36 @@ def run(command, cwd, log):
         raise RuntimeError('native_build_failed')
 
 
-def build(output, acceptance=False):
+ENTITLEMENTS = ROOT / 'tools/macos-entitlements.plist'
+
+
+def sign_macos(binary, identity, log):
+    """Developer ID sign with the hardened runtime and a secure timestamp.
+
+    The one-file binary extracts its embedded Python libraries at start-up, so
+    the only entitlement is disabling library validation (tools/macos-entitlements.plist).
+    """
+    run(['codesign', '--force', '--options', 'runtime', '--timestamp',
+         '--entitlements', str(ENTITLEMENTS), '--sign', identity, str(binary)], binary.parent, log)
+    run(['codesign', '--verify', '--strict', '--verbose=2', str(binary)], binary.parent, log)
+
+
+def notarize(archive, profile, target):
+    """Submit the release ZIP to Apple notarization and require Accepted.
+
+    A bare Mach-O inside a ZIP cannot be stapled; Gatekeeper checks the ticket
+    online on first run. Credentials stay in the operator's notarytool keychain profile.
+    """
+    result = subprocess.run(['xcrun', 'notarytool', 'submit', str(archive), '--keychain-profile', profile,
+                             '--wait', '--output-format', 'json'], capture_output=True, text=True)
+    (target / 'notarization.json').write_text(result.stdout or '{}', encoding='utf-8')
+    status = json.loads(result.stdout or '{}').get('status')
+    if result.returncode or status != 'Accepted':
+        raise RuntimeError('notarization_not_accepted: ' + str(status))
+    return {'id': json.loads(result.stdout)['id'], 'status': status}
+
+
+def build(output, acceptance=False, sign_identity=None, notary_profile=None):
     target = output.resolve()
     target.mkdir(parents=True, exist_ok=False)
     system, arch = platform.system().lower(), platform.machine().lower()
@@ -77,6 +106,12 @@ def build(output, acceptance=False):
          '--add-data', str(packaged / 'assets') + os.pathsep + 'assets',
          '--collect-data', 'certifi', str(scripts / 'hp_runtime.py')], ROOT, log)
     binary = destination / executable
+    if (sign_identity or notary_profile) and system != 'darwin':
+        raise RuntimeError('macos_signing_only')
+    if notary_profile and not sign_identity:
+        raise RuntimeError('notarization_requires_signing')
+    if sign_identity:
+        sign_macos(binary, sign_identity, log)
     run([str(binary), '--help'], stage, log)
     # Record build-only dependencies and a reviewable source-to-binary manifest.
     manifest = {'platform': system + '-' + arch, 'endpoint': ACCEPTANCE if acceptance else PRODUCTION,
@@ -93,6 +128,9 @@ def build(output, acceptance=False):
             if path.is_file(): bundle.write(path, path.relative_to(stage))
     manifest['archive'] = str(archive)
     manifest['archive_sha256'] = hashlib.sha256(archive.read_bytes()).hexdigest()
+    manifest['signed_by'] = sign_identity
+    if notary_profile:
+        manifest['notarization'] = notarize(archive, notary_profile, target)
     (target / 'build-receipt.json').write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
     print(json.dumps({k: v for k, v in manifest.items() if k != 'source_sha256'}))
 
@@ -102,5 +140,9 @@ if __name__ == '__main__':
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--acceptance', action='store_true',
                         help='connect to the acceptance (Stripe test) service instead of production')
+    parser.add_argument('--sign-identity',
+                        help='macOS: Developer ID Application identity for bin/hp (hardened runtime)')
+    parser.add_argument('--notary-profile',
+                        help='macOS: notarytool keychain profile; submits the release ZIP and waits for Accepted')
     args = parser.parse_args()
-    build(args.output, args.acceptance)
+    build(args.output, args.acceptance, args.sign_identity, args.notary_profile)
